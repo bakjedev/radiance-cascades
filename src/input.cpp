@@ -36,3 +36,10 @@ void Input::end_frame() {
     mouse_buttons_released_ = ~mouse_buttons_down_ & mouse_buttons_down_prev_;
     mouse_buttons_down_prev_ = mouse_buttons_down_;
 }
+
+void Input::on_mouse_motion(const MouseMotionEvent &event) {
+    mouse_x_ = event.x;
+    mouse_y_ = event.y;
+    mouse_delta_x_ += event.dx;
+    mouse_delta_y_ += event.dy;
+}

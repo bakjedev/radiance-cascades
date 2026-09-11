@@ -66,32 +66,26 @@ public:
     [[nodiscard]] float mouse_scroll() const { return mouse_scroll_; }
 
 private:
-    template<size_t N, class E>
-    static bool test(const std::bitset<N> &bits, E e) {
-        const auto i = static_cast<size_t>(e);
+    template<size_t N, class T>
+    static bool test(const std::bitset<N> &bits, T input) {
+        const auto i = static_cast<size_t>(input);
         return i < N && bits.test(i);
     }
 
-    template<size_t N, class E>
-    static void set(std::bitset<N> &bits, E e, bool v) {
-        const auto i = static_cast<size_t>(e);
-        if (i < N) bits.set(i, v);
+    template<size_t N, class T>
+    static void set(std::bitset<N> &bits, T input, bool value) {
+        const auto i = static_cast<size_t>(input);
+        if (i < N) bits.set(i, value);
     }
 
-    void on_key_down(const KeyDownEvent &e) { set(keys_down_, e.key, true); }
-    void on_key_up(const KeyUpEvent &e) { set(keys_down_, e.key, false); }
-    void on_mouse_down(const MouseDownEvent &e) { set(mouse_buttons_down_, e.button, true); }
-    void on_mouse_up(const MouseUpEvent &e) { set(mouse_buttons_down_, e.button, false); }
+    void on_key_down(const KeyDownEvent &event) { set(keys_down_, event.key, true); }
+    void on_key_up(const KeyUpEvent &event) { set(keys_down_, event.key, false); }
+    void on_mouse_down(const MouseDownEvent &event) { set(mouse_buttons_down_, event.button, true); }
+    void on_mouse_up(const MouseUpEvent &event) { set(mouse_buttons_down_, event.button, false); }
 
-    void on_mouse_motion(const MouseMotionEvent &e) {
-        mouse_x_ = e.x;
-        mouse_y_ = e.y;
-        mouse_delta_x_ += e.dx;
-        mouse_delta_y_ += e.dy;
-    }
+    void on_mouse_motion(const MouseMotionEvent &event);
 
-    void on_mouse_wheel(const MouseWheelEvent &e) { mouse_scroll_ += e.scroll; }
-
+    void on_mouse_wheel(const MouseWheelEvent &event) { mouse_scroll_ += event.scroll; }
 
     std::bitset<static_cast<size_t>(KeyboardKey::Count)> keys_down_;
     std::bitset<static_cast<size_t>(KeyboardKey::Count)> keys_down_prev_;
