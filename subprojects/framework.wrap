@@ -1,0 +1,7 @@
+[wrap-git]
+url = https://github.com/bakjedev/framework.git
+revision = transients
+depth = 1
+
+[provide]
+dependency_names = framework
