@@ -25,6 +25,7 @@ sources = files(
     'src/main.cpp',
     'src/application.cpp',
     'src/window.cpp',
+    'src/input.cpp',
 )
 
 executable('radiance-cascades', sources, dependencies : [framework_dep, vulkan_dep, sdl3_dep])
