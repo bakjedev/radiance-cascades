@@ -18,4 +18,11 @@ add_project_arguments(compiler.get_supported_arguments(
 
 framework_dep = dependency('framework')
 
-executable('radiance-cascades', 'src/main.cpp', dependencies : [framework_dep])
+vulkan_dep = dependency('vulkan', include_type : 'system')
+sdl3_dep = dependency('sdl3')
+
+sources = files(
+  'src/main.cpp',
+)
+
+executable('radiance-cascades', sources, dependencies : [framework_dep, vulkan_dep, sdl3_dep])
