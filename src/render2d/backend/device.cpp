@@ -13,9 +13,14 @@ Device::Device( vk::Instance instance, vk::SurfaceKHR surface ) : surface_(surfa
     find_queue_families();
     create_device();
     get_queues();
+    create_allocator(instance);
 }
 
-Device::~Device() = default;
+Device::~Device() {
+    if (allocator_) {
+        vmaDestroyAllocator(allocator_);
+    }
+}
 
 bool Device::is_device_suitable( const vk::PhysicalDevice& device ) {
     if (device.getProperties().apiVersion < vk::ApiVersion13) {
@@ -109,4 +114,16 @@ void Device::create_device() {
 
 void Device::get_queues() {
     graphics_queue_ = device_->getQueue(*queue_family_indices_.graphics, 0);
+}
+
+void Device::create_allocator( vk::Instance instance ) {
+    VmaAllocatorCreateInfo info = {};
+    info.physicalDevice = physical_device_;
+    info.device = device_.get();
+    info.instance = instance;
+    info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+
+    if (vmaCreateAllocator(&info, &allocator_) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create Vulkan Memory Allocator");
+    }
 }

@@ -18,6 +18,7 @@ public:
     [[nodiscard]] const vk::PhysicalDevice& get_physical() const { return physical_device_; }
     [[nodiscard]] vk::Device get() const { return device_.get(); }
     [[nodiscard]] vk::Queue get_queue() const { return graphics_queue_; }
+    [[nodiscard]] VmaAllocator get_allocator() const { return allocator_; }
 
 private:
     vk::UniqueSurfaceKHR surface_;
@@ -25,10 +26,12 @@ private:
     QueueFamilyIndices queue_family_indices_;
     vk::UniqueDevice device_;
     vk::Queue graphics_queue_;
+    VmaAllocator allocator_ = VK_NULL_HANDLE;
 
     static bool is_device_suitable( const vk::PhysicalDevice& device );
     void pick_physical_device( vk::Instance instance );
     void find_queue_families();
     void create_device();
     void get_queues();
+    void create_allocator( vk::Instance instance );
 };
