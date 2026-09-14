@@ -14,6 +14,11 @@ public:
     explicit Device( vk::Instance instance, vk::SurfaceKHR surface );
     ~Device();
 
+    [[nodiscard]] vk::SurfaceKHR get_surface() const { return surface_.get(); }
+    [[nodiscard]] const vk::PhysicalDevice& get_physical() const { return physical_device_; }
+    [[nodiscard]] vk::Device get() const { return device_.get(); }
+    [[nodiscard]] vk::Queue get_queue() const { return graphics_queue_; }
+
 private:
     vk::UniqueSurfaceKHR surface_;
     vk::PhysicalDevice physical_device_;

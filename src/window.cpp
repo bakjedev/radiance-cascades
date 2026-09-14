@@ -7,8 +7,8 @@ void WindowDestructor::operator()( SDL_Window* window ) const {
 }
 
 Window::Window( const uint32_t width, const uint32_t height, const char* title ) : handle_(
-    SDL_CreateWindow(title, static_cast<int>(width), static_cast<int>(height),
-                     SDL_WINDOW_RESIZABLE & SDL_WINDOW_VULKAN)) {
+        SDL_CreateWindow(title, static_cast<int>(width), static_cast<int>(height),
+                         SDL_WINDOW_RESIZABLE & SDL_WINDOW_VULKAN)), width_(width), height_(height) {
     if (!handle_) {
         throw std::runtime_error(std::string("Failed to create SDL window: ") + SDL_GetError());
     }

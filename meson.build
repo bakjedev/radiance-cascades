@@ -32,6 +32,7 @@ sources = files(
     'src/render2d/renderer_2d.cpp',
     'src/render2d/backend/instance.cpp',
     'src/render2d/backend/device.cpp',
+    'src/render2d/backend/swapchain.cpp',
 )
 
 executable('radiance-cascades', sources, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep])

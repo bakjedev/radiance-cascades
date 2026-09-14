@@ -81,7 +81,7 @@ void Device::find_queue_families() {
 
 void Device::create_device() {
     constexpr float queue_priority = 1.0F;
-    vk::DeviceQueueCreateInfo queue_create_info;
+    vk::DeviceQueueCreateInfo queue_create_info{};
     queue_create_info
             .setQueueFamilyIndex(*queue_family_indices_.graphics)
             .setQueuePriorities(queue_priority);
@@ -99,7 +99,7 @@ void Device::create_device() {
                 {} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
             };
 
-    vk::DeviceCreateInfo create_info;
+    vk::DeviceCreateInfo create_info{};
     create_info.setPNext(&feature_chain.get<vk::PhysicalDeviceFeatures2>());
     create_info.setQueueCreateInfos(queue_create_info);
     create_info.setPEnabledExtensionNames(device_extensions);

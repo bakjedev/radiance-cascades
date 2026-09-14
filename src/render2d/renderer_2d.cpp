@@ -7,7 +7,10 @@
 Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher ) : window_(window),
                                                                               event_dispatcher_(event_dispatcher),
                                                                               device_(instance_.get(),
-                                                                                  create_surface(window, instance_)) {
+                                                                                  create_surface(window, instance_)),
+                                                                              swapchain_(device_, {
+                                                                                      window.width(), window.height()
+                                                                                  }) {
 }
 
 VkSurfaceKHR Renderer2D::create_surface( const Window& window, const Instance& instance ) {

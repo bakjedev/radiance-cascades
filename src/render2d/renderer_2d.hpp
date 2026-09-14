@@ -1,6 +1,7 @@
 #pragma once
 #include "backend/device.hpp"
 #include "backend/instance.hpp"
+#include "backend/swapchain.hpp"
 
 class Window;
 class EventDispatcher;
@@ -15,6 +16,7 @@ private:
 
     Instance instance_;
     Device device_;
+    Swapchain swapchain_;
 
     static VkSurfaceKHR create_surface( const Window& window, const Instance& instance );
 };
