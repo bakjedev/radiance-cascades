@@ -20,12 +20,14 @@ framework_dep = dependency('framework')
 
 vulkan_dep = dependency('vulkan', include_type : 'system')
 sdl3_dep = dependency('sdl3')
+vma_dep = dependency('VulkanMemoryAllocator')
 
 sources = files(
     'src/main.cpp',
     'src/application.cpp',
     'src/window.cpp',
     'src/input.cpp',
+    'src/render2d/renderer_2d.cpp',
 )
 
-executable('radiance-cascades', sources, dependencies : [framework_dep, vulkan_dep, sdl3_dep])
+executable('radiance-cascades', sources, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep])

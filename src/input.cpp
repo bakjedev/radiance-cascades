@@ -4,17 +4,17 @@
 
 Input::Input(EventDispatcher &event_dispatcher) : event_dispatcher_(event_dispatcher) {
     listener_ids_.push_back(event_dispatcher_.listen<KeyDownEvent>(
-        [this](const KeyDownEvent &e) { on_key_down(e); }));
+        [this](const KeyDownEvent &key) { on_key_down(key); }));
     listener_ids_.push_back(event_dispatcher_.listen<KeyUpEvent>(
-        [this](const KeyUpEvent &e) { on_key_up(e); }));
+        [this](const KeyUpEvent &key) { on_key_up(key); }));
     listener_ids_.push_back(event_dispatcher_.listen<MouseDownEvent>(
-        [this](const MouseDownEvent &e) { on_mouse_down(e); }));
+        [this](const MouseDownEvent &button) { on_mouse_down(button); }));
     listener_ids_.push_back(event_dispatcher_.listen<MouseUpEvent>(
-        [this](const MouseUpEvent &e) { on_mouse_up(e); }));
+        [this](const MouseUpEvent &button) { on_mouse_up(button); }));
     listener_ids_.push_back(event_dispatcher_.listen<MouseMotionEvent>(
-        [this](const MouseMotionEvent &e) { on_mouse_motion(e); }));
+        [this](const MouseMotionEvent &motion) { on_mouse_motion(motion); }));
     listener_ids_.push_back(event_dispatcher_.listen<MouseWheelEvent>(
-        [this](const MouseWheelEvent &e) { on_mouse_wheel(e); }));
+        [this](const MouseWheelEvent &wheel) { on_mouse_wheel(wheel); }));
 }
 
 Input::~Input() {

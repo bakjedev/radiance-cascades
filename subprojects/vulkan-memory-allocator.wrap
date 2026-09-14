@@ -1,0 +1,14 @@
+[wrap-file]
+directory = VulkanMemoryAllocator-3.3.0
+source_url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/tags/v3.3.0.tar.gz
+source_filename = VulkanMemoryAllocator-3.3.0.tar.gz
+source_hash = c4f6bbe6b5a45c2eb610ca9d231158e313086d5b1a40c9922cb42b597419b14e
+source_fallback_url = https://wrapdb.mesonbuild.com/v2/vulkan-memory-allocator_3.3.0-1/get_source/VulkanMemoryAllocator-3.3.0.tar.gz
+patch_filename = vulkan-memory-allocator_3.3.0-1_patch.zip
+patch_url = https://wrapdb.mesonbuild.com/v2/vulkan-memory-allocator_3.3.0-1/get_patch
+patch_fallback_url = https://github.com/mesonbuild/wrapdb/releases/download/vulkan-memory-allocator_3.3.0-1/vulkan-memory-allocator_3.3.0-1_patch.zip
+patch_hash = 85f3c1c82f3d1938fa295c80b06fc1c5c001f939f009b566c336a941d5d2d8b5
+wrapdb_version = 3.3.0-1
+
+[provide]
+dependency_names = VulkanMemoryAllocator

@@ -6,7 +6,8 @@ struct QuitEvent {
 };
 
 Application::Application(const uint32_t window_width, const uint32_t window_height) : window_(
-        window_width, window_height, "everything.. seems to be in order."), input_(event_dispatcher_) {
+        window_width, window_height, "everything.. seems to be in order."), input_(event_dispatcher_),
+    renderer_(window_, event_dispatcher_) {
 }
 
 Application::~Application() = default;
