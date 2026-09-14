@@ -32,10 +32,30 @@ void Application::poll_events() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
-            case SDL_EVENT_QUIT :
+            case SDL_EVENT_QUIT:
                 event_dispatcher_.dispatch(QuitEvent{});
                 break;
-            default :
+            case SDL_EVENT_KEY_DOWN:
+                event_dispatcher_.dispatch(KeyDownEvent{static_cast<KeyboardKey>(event.key.scancode)});
+                break;
+            case SDL_EVENT_KEY_UP:
+                event_dispatcher_.dispatch(KeyUpEvent{static_cast<KeyboardKey>(event.key.scancode)});
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                event_dispatcher_.dispatch(MouseDownEvent{static_cast<MouseButton>(event.button.button)});
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                event_dispatcher_.dispatch(MouseUpEvent{static_cast<MouseButton>(event.button.button)});
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+                event_dispatcher_.dispatch(MouseMotionEvent{
+                    event.motion.x, event.motion.y, event.motion.xrel, event.motion.yrel
+                });
+                break;
+            case SDL_EVENT_MOUSE_WHEEL:
+                event_dispatcher_.dispatch(MouseWheelEvent{static_cast<float>(event.wheel.integer_y)});
+                break;
+            default:
                 break;
         }
     }
