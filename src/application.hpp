@@ -7,7 +7,7 @@
 
 class Application {
 public:
-    Application(uint32_t window_width, uint32_t window_height);
+    Application( uint32_t window_width, uint32_t window_height );
 
     ~Application();
 

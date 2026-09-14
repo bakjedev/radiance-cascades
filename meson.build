@@ -16,11 +16,13 @@ add_project_arguments(compiler.get_supported_arguments(
                           '-Wduplicated-branches', '-Wlogical-op', '-Wuseless-cast', '-Wsuggest-override'
                       ), language : 'cpp')
 
+add_project_arguments('-DVULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1', language : 'cpp')
+
 framework_dep = dependency('framework')
 
 vulkan_dep = dependency('vulkan', include_type : 'system')
 sdl3_dep = dependency('sdl3')
-vma_dep = dependency('VulkanMemoryAllocator')
+vma_dep = dependency('VulkanMemoryAllocator', include_type : 'system')
 
 sources = files(
     'src/main.cpp',
@@ -28,6 +30,8 @@ sources = files(
     'src/window.cpp',
     'src/input.cpp',
     'src/render2d/renderer_2d.cpp',
+    'src/render2d/backend/instance.cpp',
+    'src/render2d/backend/device.cpp',
 )
 
 executable('radiance-cascades', sources, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep])

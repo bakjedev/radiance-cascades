@@ -2,23 +2,23 @@
 
 #include "event_dispatcher.hpp"
 
-Input::Input(EventDispatcher &event_dispatcher) : event_dispatcher_(event_dispatcher) {
+Input::Input( EventDispatcher& event_dispatcher ) : event_dispatcher_(event_dispatcher) {
     listener_ids_.push_back(event_dispatcher_.listen<KeyDownEvent>(
-        [this](const KeyDownEvent &key) { on_key_down(key); }));
+        [this]( const KeyDownEvent& key ) { on_key_down(key); }));
     listener_ids_.push_back(event_dispatcher_.listen<KeyUpEvent>(
-        [this](const KeyUpEvent &key) { on_key_up(key); }));
+        [this]( const KeyUpEvent& key ) { on_key_up(key); }));
     listener_ids_.push_back(event_dispatcher_.listen<MouseDownEvent>(
-        [this](const MouseDownEvent &button) { on_mouse_down(button); }));
+        [this]( const MouseDownEvent& button ) { on_mouse_down(button); }));
     listener_ids_.push_back(event_dispatcher_.listen<MouseUpEvent>(
-        [this](const MouseUpEvent &button) { on_mouse_up(button); }));
+        [this]( const MouseUpEvent& button ) { on_mouse_up(button); }));
     listener_ids_.push_back(event_dispatcher_.listen<MouseMotionEvent>(
-        [this](const MouseMotionEvent &motion) { on_mouse_motion(motion); }));
+        [this]( const MouseMotionEvent& motion ) { on_mouse_motion(motion); }));
     listener_ids_.push_back(event_dispatcher_.listen<MouseWheelEvent>(
-        [this](const MouseWheelEvent &wheel) { on_mouse_wheel(wheel); }));
+        [this]( const MouseWheelEvent& wheel ) { on_mouse_wheel(wheel); }));
 }
 
 Input::~Input() {
-    for (const auto id: listener_ids_) event_dispatcher_.remove(id);
+    for (const auto id : listener_ids_) event_dispatcher_.remove(id);
 }
 
 void Input::begin_frame() {
@@ -37,7 +37,7 @@ void Input::end_frame() {
     mouse_buttons_down_prev_ = mouse_buttons_down_;
 }
 
-void Input::on_mouse_motion(const MouseMotionEvent &event) {
+void Input::on_mouse_motion( const MouseMotionEvent& event ) {
     mouse_x_ = event.x;
     mouse_y_ = event.y;
     mouse_delta_x_ += event.dx;
