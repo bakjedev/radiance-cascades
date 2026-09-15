@@ -28,6 +28,7 @@ sources = files(
     'src/main.cpp',
     'src/application.cpp',
     'src/window.cpp',
+    'src/file_system.cpp',
     'src/input.cpp',
     'src/render2d/renderer_2d.cpp',
     'src/render2d/backend/instance.cpp',

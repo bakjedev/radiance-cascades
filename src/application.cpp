@@ -17,6 +17,8 @@ void Application::run() {
         running = false;
     });
 
+    file_system_.add_route("assets", "../assets");
+
     while (running) {
         input_.begin_frame();
         poll_events();

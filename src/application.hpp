@@ -1,5 +1,6 @@
 #pragma once
 #include "event_dispatcher.hpp"
+#include "file_system.hpp"
 #include "input.hpp"
 #include "sdl_init.hpp"
 #include "window.hpp"
@@ -21,6 +22,7 @@ private:
     EventDispatcher event_dispatcher_;
     Window window_;
     Input input_;
+    FileSystem file_system_;
     ResourceManager<ShaderResource> resource_manager_;
     Renderer2D renderer_;
     bool running = true;
