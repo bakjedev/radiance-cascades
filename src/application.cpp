@@ -24,9 +24,7 @@ void Application::run() {
         poll_events();
         input_.end_frame();
 
-        if (renderer_.begin_frame()) {
-            renderer_.end_frame();
-        }
+        renderer_.render();
 
         if (input_.key_pressed(KeyboardKey::Space)) {
             std::cout << "Jump!\n";
