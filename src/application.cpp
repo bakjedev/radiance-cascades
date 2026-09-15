@@ -5,7 +5,7 @@
 struct QuitEvent {
 };
 
-Application::Application( const uint32_t window_width, const uint32_t window_height ) : window_(
+Application::Application( const uint32_t window_width, const uint32_t window_height ) : window_(event_dispatcher_,
         window_width, window_height, "everything.. seems to be in order."), input_(event_dispatcher_),
     renderer_(window_, event_dispatcher_) {
 }
@@ -22,8 +22,12 @@ void Application::run() {
         poll_events();
         input_.end_frame();
 
-        if (input_.key_down(KeyboardKey::A)) {
-            std::cout << "Hello world !\n";
+        renderer_.begin_frame();
+
+        renderer_.end_frame();
+
+        if (input_.key_pressed(KeyboardKey::Space)) {
+            std::cout << "Jump!\n";
         }
     }
 }
@@ -54,6 +58,9 @@ void Application::poll_events() {
                 break;
             case SDL_EVENT_MOUSE_WHEEL:
                 event_dispatcher_.dispatch(MouseWheelEvent{static_cast<float>(event.wheel.integer_y)});
+                break;
+            case SDL_EVENT_WINDOW_RESIZED:
+                event_dispatcher_.dispatch(WindowResizeEvent{event.window.data1, event.window.data2});
                 break;
             default:
                 break;

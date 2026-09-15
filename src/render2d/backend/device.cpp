@@ -43,6 +43,10 @@ bool Device::is_device_suitable( const vk::PhysicalDevice& device ) {
         return false;
     }
 
+    if (!features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) {
+        return false;
+    }
+
     return true;
 }
 
@@ -94,15 +98,11 @@ void Device::create_device() {
     const std::vector device_extensions = {vk::KHRSwapchainExtensionName};
 
     vk::StructureChain<vk::PhysicalDeviceFeatures2,
-                vk::PhysicalDeviceVulkan11Features,
-                vk::PhysicalDeviceVulkan13Features,
-                vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
-            feature_chain = {
-                {}, // vk::PhysicalDeviceFeatures2
-                {}, // vk::PhysicalDeviceVulkan11Features
-                {}, // vk::PhysicalDeviceVulkan13Features
-                {} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
-            };
+        vk::PhysicalDeviceVulkan11Features,
+        vk::PhysicalDeviceVulkan13Features,
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> feature_chain;
+
+    feature_chain.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = true;
 
     vk::DeviceCreateInfo create_info{};
     create_info.setPNext(&feature_chain.get<vk::PhysicalDeviceFeatures2>());

@@ -17,6 +17,7 @@ public:
     [[nodiscard]] vk::SurfaceKHR get_surface() const { return surface_.get(); }
     [[nodiscard]] const vk::PhysicalDevice& get_physical() const { return physical_device_; }
     [[nodiscard]] vk::Device get() const { return device_.get(); }
+    [[nodiscard]] uint32_t get_queue_family() const { return queue_family_indices_.graphics.value_or(0); }
     [[nodiscard]] vk::Queue get_queue() const { return graphics_queue_; }
     [[nodiscard]] VmaAllocator get_allocator() const { return allocator_; }
 
