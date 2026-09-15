@@ -1,5 +1,5 @@
 #include "application.hpp"
-
+#include "resource/types/shader_resource.hpp"
 #include <iostream>
 
 struct QuitEvent {
