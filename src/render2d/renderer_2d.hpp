@@ -50,6 +50,10 @@ private:
 
     FwrkAllocator fwrk_allocator_;
     fwrk::Context context_;
+    std::vector<fwrk::ResourceID> swapchain_imports_;
+    fwrk::ResourceID swapchain_proxy_;
+
+    void import_resources();
 
     static VkSurfaceKHR create_surface( const Window& window, const Instance& instance );
 };

@@ -78,6 +78,9 @@ Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher ) : wi
     for (auto& semaphore : submit_semaphores_) {
         semaphore = device_.get().createSemaphoreUnique(semaphore_create_info);
     }
+
+    import_resources();
+    swapchain_proxy_ = context_.create_proxy();
 }
 
 Renderer2D::~Renderer2D() {
@@ -102,6 +105,7 @@ bool Renderer2D::begin_frame() {
     auto image_index = swapchain_.acquire_next_image(frame.image_available.get());
     if (!image_index) {
         swapchain_.recreate({window_.width(), window_.height()});
+        import_resources();
         return false;
     }
     image_index_ = image_index.value();
@@ -114,6 +118,16 @@ bool Renderer2D::begin_frame() {
 }
 
 void Renderer2D::run_frame() {
+    const Frame& frame = frames_.at(current_frame_);
+    fwrk::Graph& graph = context_.graph();
+
+    graph.set_image_end_state(swapchain_proxy_, {
+                                  VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                              });
+
+    context_.update_proxy(swapchain_proxy_, swapchain_imports_[image_index_]);
+
+    graph.execute(frame.command_buffer.get(), current_frame_);
 }
 
 void Renderer2D::end_frame() {
@@ -140,9 +154,30 @@ void Renderer2D::end_frame() {
 
     if (!swapchain_.present(device_.get_queue(), image_index_, submit_semaphores_.at(image_index_).get())) {
         swapchain_.recreate({window_.width(), window_.height()});
+        import_resources();
     }
 
     current_frame_ = (current_frame_ + 1) % frames_in_flight;
+}
+
+void Renderer2D::import_resources() {
+    swapchain_imports_.resize(swapchain_.image_count());
+
+    const fwrk::ImageImportInfo swapchain_image_info{
+        .type = VK_IMAGE_TYPE_2D,
+        .size = {swapchain_.extent().width, swapchain_.extent().height, 1},
+        .format = static_cast<VkFormat>(swapchain_.format()),
+        .state = fwrk::PhysicalState::Undefined
+    };
+
+    for (uint32_t i = 0; i < swapchain_.image_count(); i++) {
+        fwrk::ResourceID& res = swapchain_imports_[i];
+        if (res) {
+            context_.update_image(res, swapchain_image_info, swapchain_.image(i));
+        } else {
+            res = context_.import_image(swapchain_image_info, swapchain_.image(i), "Swapchain image");
+        }
+    }
 }
 
 VkSurfaceKHR Renderer2D::create_surface( const Window& window, const Instance& instance ) {
