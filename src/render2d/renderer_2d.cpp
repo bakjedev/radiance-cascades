@@ -26,7 +26,7 @@ Renderer2D::~Renderer2D() {
     device_.get().waitIdle();
 }
 
-void Renderer2D::begin_frame() {
+bool Renderer2D::begin_frame() {
     const Frame& frame = frames_.at(current_frame_);
 
     vk::Result result = device_.get().waitForFences(frame.in_flight.get(), vk::True, UINT64_MAX);
@@ -35,16 +35,17 @@ void Renderer2D::begin_frame() {
     }
 
     auto image_index = swapchain_.acquire_next_image(frame.image_available.get());
-    if (image_index) {
-        image_index_ = image_index.value();
-    } else {
+    if (!image_index) {
         swapchain_.recreate({window_.width(), window_.height()});
+        return false;
     }
+    image_index_ = image_index.value();
 
     device_.get().resetFences(frame.in_flight.get());
 
     device_.get().resetCommandPool(frame.command_pool.get());
     frame.command_buffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    return true;
 }
 
 void Renderer2D::end_frame() {

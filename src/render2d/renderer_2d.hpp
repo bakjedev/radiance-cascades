@@ -14,7 +14,7 @@ public:
     Renderer2D( Window& window, EventDispatcher& event_dispatcher );
     ~Renderer2D();
 
-    void begin_frame();
+    bool begin_frame();
     void end_frame();
 
 private:
