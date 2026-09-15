@@ -17,6 +17,7 @@ struct WindowDestructor {
 class Window {
 public:
     Window( EventDispatcher& event_dispatcher, uint32_t width, uint32_t height, const char* title );
+    ~Window();
 
     [[nodiscard]] SDL_Window* get() const { return handle_.get(); }
     [[nodiscard]] uint32_t width() const { return width_; }

@@ -21,6 +21,10 @@ Window::Window( EventDispatcher& event_dispatcher, const uint32_t width, const u
     }
 }
 
+Window::~Window() {
+    event_dispatcher_->remove(resize_listener_);
+}
+
 void Window::window_resize( const WindowResizeEvent& event ) {
     width_ = static_cast<uint32_t>(event.width);
     height_ = static_cast<uint32_t>(event.height);

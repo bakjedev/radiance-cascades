@@ -13,7 +13,7 @@ Application::Application( const uint32_t window_width, const uint32_t window_hei
 Application::~Application() = default;
 
 void Application::run() {
-    event_dispatcher_.listen<QuitEvent>([this]( const QuitEvent& ) {
+    const uint64_t quit_event_listener = event_dispatcher_.listen<QuitEvent>([this]( const QuitEvent& ) {
         running = false;
     });
 
@@ -30,6 +30,8 @@ void Application::run() {
             std::cout << "Jump!\n";
         }
     }
+
+    event_dispatcher_.remove(quit_event_listener);
 }
 
 void Application::poll_events() {
