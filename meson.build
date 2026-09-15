@@ -37,4 +37,22 @@ sources = files(
     'src/render2d/backend/frame.cpp',
 )
 
-executable('radiance-cascades', sources, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep])
+glslc = find_program('glslc')
+
+shaders = [
+    'basic.vert',
+    'basic.frag'
+]
+
+compiled_shaders = []
+foreach shader : shaders
+    compiled_shaders += custom_target(
+        shader + '.spv',
+        input : 'assets/shaders' / shader,
+        output : shader + '.spv',
+        command : [glslc, '@INPUT@', '-o', '@OUTPUT@'],
+        build_by_default : true,
+    )
+endforeach
+
+executable('radiance-cascades', sources, compiled_shaders, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep])

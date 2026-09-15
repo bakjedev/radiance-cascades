@@ -6,6 +6,7 @@
 - Meson >= 1.1.0
 - Ninja
 - C++20 compiler
+- glslc
 
 ## Build
 

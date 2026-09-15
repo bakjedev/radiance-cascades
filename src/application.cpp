@@ -28,7 +28,6 @@ void Application::run() {
             renderer_.end_frame();
         }
 
-
         if (input_.key_pressed(KeyboardKey::Space)) {
             std::cout << "Jump!\n";
         }
