@@ -2,6 +2,7 @@
 #include "fwrk_allocator.hpp"
 #include "backend/device.hpp"
 #include "backend/frame.hpp"
+#include "backend/image.hpp"
 #include "backend/instance.hpp"
 #include "backend/swapchain.hpp"
 #include "framework/context.hpp"
@@ -44,7 +45,12 @@ private:
     vk::UniqueShaderModule shader_module_;
     vk::UniquePipeline pipeline_;
 
-    vk::Image scene_image_;
+    vk::UniqueDescriptorPool descriptor_pool_;
+    vk::UniqueDescriptorSetLayout descriptor_set_layout_;
+    vk::DescriptorSet descriptor_set_;
+
+    std::optional<Image> scene_image_;
+    vk::UniqueImageView scene_image_view_;
 
     uint32_t current_frame_{};
     uint32_t image_index_{};

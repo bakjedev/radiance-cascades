@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL_vulkan.h>
 
+#include "backend/descriptor.hpp"
 #include "backend/pipeline.hpp"
 #include "src/window.hpp"
 #include "src/resource/resource_manager.hpp"
@@ -31,29 +32,38 @@ Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher,
         semaphore = device_.get().createSemaphoreUnique(semaphore_create_info);
     }
 
-    constexpr fwrk::ImageCreateInfo scene_image_create_info{
-        .type = VK_IMAGE_TYPE_2D,
-        .size = VkExtent3D{.width = 256, .height = 256, .depth = 1},
-        .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-        .flags = {},
-        .mips = 1,
-        .layers = 1,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .tiling = VK_IMAGE_TILING_LINEAR,
-        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-    };
-
-    scene_image_ = fwrk_allocator_.create_image(scene_image_create_info).value().handle;
+    scene_image_.emplace(device_.get_allocator(),
+                         ImageDesc{}.set_extent(256, 256).set_format(vk::Format::eR16G16B16A16Sfloat).set_usage(
+                             vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst |
+                             vk::ImageUsageFlagBits::eTransferSrc));
+    scene_image_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
 
     import_resources();
     swapchain_proxy_ = context_.create_proxy();
+
+    descriptor_set_layout_ = create_descriptor_set_layout(device_.get(), DescriptorSetLayoutDesc{}
+                                                          .add_binding(0, vk::DescriptorType::eStorageImage,
+                                                                       vk::ShaderStageFlagBits::eCompute));
+
+    std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1}};
+    descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 1);
+
+    descriptor_set_ = device_.get().allocateDescriptorSets(
+                vk::DescriptorSetAllocateInfo{}.setDescriptorPool(*descriptor_pool_).setSetLayouts(
+                    *descriptor_set_layout_)).
+            front();
+
+    DescriptorWriter{}
+            .add_image(0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
+            .update(device_.get(), descriptor_set_);
+
 
     auto shader_resource = resource_manager_.create_from_file<ShaderResource>(
         "basic.comp.spv", ShaderResourceLoader{&file_system_});
 
     shader_module_ = create_shader_module(device_.get(), shader_resource->code);
 
-    pipeline_layout_ = create_pipeline_layout(device_.get(), {}, {});
+    pipeline_layout_ = create_pipeline_layout(device_.get(), {&descriptor_set_layout_.get(), 1}, {});
 
     const ComputePipelineDesc desc{.module = shader_module_.get(), .layout = pipeline_layout_.get()};
 
@@ -62,8 +72,6 @@ Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher,
 
 Renderer2D::~Renderer2D() {
     device_.get().waitIdle();
-    fwrk::PhysicalImage fake_physical_image{scene_image_, fwrk::PhysicalState::Undefined};
-    fwrk_allocator_.destroy_image(fake_physical_image);
 }
 
 void Renderer2D::render() {
@@ -101,17 +109,16 @@ void Renderer2D::run_frame() {
     fwrk::Graph& graph = context_.graph();
 
     if (should_compile_) {
-        graph.add_compute_pass().set_image_transfer_dst(
+        graph.add_compute_pass().set_storage_image_write(
             {.resource = {.id = scene_image_import_}}).set_execute(
             [this]( vk::CommandBuffer cmd ) {
-                constexpr vk::ClearColorValue color{0.0f, 1.0f, 0.0f, 10.0f};
-                constexpr vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pipeline_layout_.get(), 0,
+                                       1, &descriptor_set_, 0, nullptr);
+                cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline_.get());
 
-                cmd.clearColorImage(
-                    scene_image_,
-                    vk::ImageLayout::eTransferDstOptimal,
-                    color,
-                    range);
+                constexpr uint32_t gx = (256 + 7) / 8;
+                constexpr uint32_t gy = (256 + 7) / 8;
+                cmd.dispatch(gx, gy, 1);
             });
 
         graph.add_compute_pass().set_image_transfer_src({.resource = {.id = scene_image_import_}}).
@@ -125,7 +132,7 @@ void Renderer2D::run_frame() {
                         {{{420, 0, 0}, {1500, 1080, 1}}}
                     };
 
-                    cmd.blitImage(scene_image_, vk::ImageLayout::eTransferSrcOptimal,
+                    cmd.blitImage(scene_image_->image(), vk::ImageLayout::eTransferSrcOptimal,
                                   swapchain_.image(image_index_), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
                                   vk::Filter::eNearest);
                 });
@@ -201,9 +208,9 @@ void Renderer2D::import_resources() {
         .state = fwrk::PhysicalState::Undefined
     };
     if (scene_image_import_) {
-        context_.update_image(scene_image_import_, scene_image_info, scene_image_);
+        context_.update_image(scene_image_import_, scene_image_info, scene_image_->image());
     } else {
-        scene_image_import_ = context_.import_image(scene_image_info, scene_image_);
+        scene_image_import_ = context_.import_image(scene_image_info, scene_image_->image());
     }
 }
 
