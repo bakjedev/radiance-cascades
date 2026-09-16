@@ -7,61 +7,6 @@
 #include "src/resource/resource_manager.hpp"
 #include "src/resource/types/shader_resource.hpp"
 
-std::optional<fwrk::PhysicalImage> FwrkAllocator::create_image( const fwrk::ImageCreateInfo& img_info ) {
-    VmaAllocation allocation;
-    VkImage image;
-
-    vk::ImageCreateInfo create_info = {};
-    create_info.setImageType(static_cast<vk::ImageType>(img_info.type));
-    create_info.setFormat(static_cast<vk::Format>(img_info.format));
-    create_info.setFlags(vk::ImageCreateFlags(img_info.flags));
-    create_info.setExtent(img_info.size);
-    create_info.setMipLevels(img_info.mips);
-    create_info.setArrayLayers(img_info.layers);
-    create_info.setSamples(static_cast<vk::SampleCountFlagBits>(img_info.samples));
-    create_info.setTiling(static_cast<vk::ImageTiling>(img_info.tiling));
-    create_info.setUsage(vk::ImageUsageFlags(img_info.usage));
-    create_info.setSharingMode(vk::SharingMode::eExclusive);
-    create_info.setInitialLayout(vk::ImageLayout::eUndefined);
-
-    VmaAllocationCreateInfo alloc_info = {};
-    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-
-    vmaCreateImage(allocator, reinterpret_cast<const VkImageCreateInfo*>(&create_info), &alloc_info, &image,
-                   &allocation, nullptr);
-
-
-    image_to_allocation[image] = allocation;
-    return fwrk::PhysicalImage{image, fwrk::PhysicalState::Undefined};
-}
-
-std::optional<fwrk::PhysicalBuffer> FwrkAllocator::create_buffer( const fwrk::BufferCreateInfo& buf_info ) {
-    VmaAllocation allocation;
-    VkBuffer buffer;
-
-    vk::BufferCreateInfo create_info = {};
-    create_info.setSize(buf_info.size);
-    create_info.setFlags(vk::BufferCreateFlags(buf_info.flags));
-    create_info.setUsage(vk::BufferUsageFlags(buf_info.usage));
-
-    VmaAllocationCreateInfo alloc_info = {};
-    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-
-    vmaCreateBuffer(allocator, reinterpret_cast<const VkBufferCreateInfo*>(&create_info), &alloc_info, &buffer,
-                    &allocation, nullptr);
-
-    buffer_to_allocation[buffer] = allocation;
-    return fwrk::PhysicalBuffer{buffer, fwrk::PhysicalState::Undefined};
-}
-
-void FwrkAllocator::destroy_image( fwrk::PhysicalImage& img ) {
-    vmaDestroyImage(allocator, img.handle, image_to_allocation[img.handle]);
-}
-
-void FwrkAllocator::destroy_buffer( fwrk::PhysicalBuffer& buf ) {
-    vmaDestroyBuffer(allocator, buf.handle, buffer_to_allocation[buf.handle]);
-}
-
 Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher,
                         ResourceManager<ShaderResource>& resource_manager,
                         FileSystem& file_system ) : window_(window),
@@ -86,6 +31,20 @@ Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher,
         semaphore = device_.get().createSemaphoreUnique(semaphore_create_info);
     }
 
+    constexpr fwrk::ImageCreateInfo scene_image_create_info{
+        .type = VK_IMAGE_TYPE_2D,
+        .size = VkExtent3D{.width = 256, .height = 256, .depth = 1},
+        .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+        .flags = {},
+        .mips = 1,
+        .layers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_LINEAR,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+    };
+
+    scene_image_ = fwrk_allocator_.create_image(scene_image_create_info).value().handle;
+
     import_resources();
     swapchain_proxy_ = context_.create_proxy();
 
@@ -103,6 +62,8 @@ Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher,
 
 Renderer2D::~Renderer2D() {
     device_.get().waitIdle();
+    fwrk::PhysicalImage fake_physical_image{scene_image_, fwrk::PhysicalState::Undefined};
+    fwrk_allocator_.destroy_image(fake_physical_image);
 }
 
 void Renderer2D::render() {
@@ -140,45 +101,34 @@ void Renderer2D::run_frame() {
     fwrk::Graph& graph = context_.graph();
 
     if (should_compile_) {
-        const fwrk::ResourceID image = graph.create_image(fwrk::ImageCreateInfo{
-            .type = VK_IMAGE_TYPE_2D,
-            .size = VkExtent3D{.width = 256, .height = 256, .depth = 1},
-            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-            .flags = {},
-            .mips = 1,
-            .layers = 1,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .tiling = VK_IMAGE_TILING_LINEAR,
-            .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-        });
-
         graph.add_compute_pass().set_image_transfer_dst(
-            {.resource = {.id = image}}).set_execute(
-            [this, image]( vk::CommandBuffer cmd ) {
+            {.resource = {.id = scene_image_import_}}).set_execute(
+            [this]( vk::CommandBuffer cmd ) {
                 constexpr vk::ClearColorValue color{0.0f, 1.0f, 0.0f, 10.0f};
                 constexpr vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
 
                 cmd.clearColorImage(
-                    vk::Image{context_.get_raw_image(image)},
+                    scene_image_,
                     vk::ImageLayout::eTransferDstOptimal,
                     color,
                     range);
             });
 
-        graph.add_compute_pass().set_image_transfer_src({.resource = {.id = image}}).set_image_transfer_dst({
-            .resource = {.id = swapchain_proxy_}
-        }).set_execute([this, image]( vk::CommandBuffer cmd ) {
-            vk::ImageBlit blit{
-                {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                {{{0, 0, 0}, {256, 256, 1}}},
-                {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                {{{832, 412, 0}, {1088, 668, 1}}}
-            };
+        graph.add_compute_pass().set_image_transfer_src({.resource = {.id = scene_image_import_}}).
+                set_image_transfer_dst({
+                    .resource = {.id = swapchain_proxy_}
+                }).set_execute([this]( vk::CommandBuffer cmd ) {
+                    constexpr vk::ImageBlit blit{
+                        {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                        {{{0, 0, 0}, {256, 256, 1}}},
+                        {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                        {{{420, 0, 0}, {1500, 1080, 1}}}
+                    };
 
-            cmd.blitImage(context_.get_raw_image(image), vk::ImageLayout::eTransferSrcOptimal,
-                          swapchain_.image(image_index_), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
-                          vk::Filter::eNearest);
-        });
+                    cmd.blitImage(scene_image_, vk::ImageLayout::eTransferSrcOptimal,
+                                  swapchain_.image(image_index_), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
+                                  vk::Filter::eNearest);
+                });
 
         graph.set_image_end_state(swapchain_proxy_, {
                                       VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE,
@@ -242,6 +192,18 @@ void Renderer2D::import_resources() {
         } else {
             res = context_.import_image(swapchain_image_info, swapchain_.image(i), "Swapchain image");
         }
+    }
+
+    constexpr fwrk::ImageImportInfo scene_image_info{
+        .type = VK_IMAGE_TYPE_2D,
+        .size = {.width = 256, .height = 256, .depth = 1},
+        .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+        .state = fwrk::PhysicalState::Undefined
+    };
+    if (scene_image_import_) {
+        context_.update_image(scene_image_import_, scene_image_info, scene_image_);
+    } else {
+        scene_image_import_ = context_.import_image(scene_image_info, scene_image_);
     }
 }
 

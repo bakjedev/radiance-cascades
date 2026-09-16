@@ -32,6 +32,7 @@ sources = files(
     'src/input.cpp',
     'src/resource/types/shader_resource.cpp',
     'src/render2d/renderer_2d.cpp',
+    'src/render2d/fwrk_allocator.cpp',
     'src/render2d/backend/instance.cpp',
     'src/render2d/backend/device.cpp',
     'src/render2d/backend/swapchain.cpp',
