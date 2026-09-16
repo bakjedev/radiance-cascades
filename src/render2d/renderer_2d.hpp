@@ -64,6 +64,7 @@ private:
     fwrk::Context context_;
     std::vector<fwrk::ResourceID> swapchain_imports_;
     fwrk::ResourceID swapchain_proxy_;
+    bool should_compile_ = true;
 
     void import_resources();
 

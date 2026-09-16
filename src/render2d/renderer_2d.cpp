@@ -71,7 +71,8 @@ Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher,
                                                             create_surface(window, instance_)),
                                                     swapchain_(device_, {
                                                                    window.width(), window.height()
-                                                               }),
+                                                               }, vk::ImageUsageFlagBits::eColorAttachment |
+                                                                  vk::ImageUsageFlagBits::eTransferDst),
                                                     fwrk_allocator_(device_.get_allocator()),
                                                     context_(device_.get(),
                                                              frames_in_flight, fwrk_allocator_) {
@@ -138,9 +139,56 @@ void Renderer2D::run_frame() {
     const Frame& frame = frames_.at(current_frame_);
     fwrk::Graph& graph = context_.graph();
 
-    graph.set_image_end_state(swapchain_proxy_, {
-                                  VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-                              });
+    if (should_compile_) {
+        const fwrk::ResourceID image = graph.create_image(fwrk::ImageCreateInfo{
+            .type = VK_IMAGE_TYPE_2D,
+            .size = VkExtent3D{.width = 256, .height = 256, .depth = 1},
+            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+            .flags = {},
+            .mips = 1,
+            .layers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_LINEAR,
+            .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+        });
+
+        graph.add_compute_pass().set_image_transfer_dst(
+            {.resource = {.id = image}}).set_execute(
+            [this, image]( vk::CommandBuffer cmd ) {
+                constexpr vk::ClearColorValue color{0.0f, 1.0f, 0.0f, 10.0f};
+                constexpr vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+
+                cmd.clearColorImage(
+                    vk::Image{context_.get_raw_image(image)},
+                    vk::ImageLayout::eTransferDstOptimal,
+                    color,
+                    range);
+            });
+
+        graph.add_compute_pass().set_image_transfer_src({.resource = {.id = image}}).set_image_transfer_dst({
+            .resource = {.id = swapchain_proxy_}
+        }).set_execute([this, image]( vk::CommandBuffer cmd ) {
+            vk::ImageBlit blit{
+                {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                {{{0, 0, 0}, {256, 256, 1}}},
+                {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                {{{832, 412, 0}, {1088, 668, 1}}}
+            };
+
+            cmd.blitImage(context_.get_raw_image(image), vk::ImageLayout::eTransferSrcOptimal,
+                          swapchain_.image(image_index_), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
+                          vk::Filter::eNearest);
+        });
+
+        graph.set_image_end_state(swapchain_proxy_, {
+                                      VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE,
+                                      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                                  });
+
+        graph.compile();
+        should_compile_ = false;
+    }
+
 
     context_.update_proxy(swapchain_proxy_, swapchain_imports_[image_index_]);
 

@@ -121,7 +121,6 @@ void Device::create_allocator( vk::Instance instance ) {
     info.physicalDevice = physical_device_;
     info.device = device_.get();
     info.instance = instance;
-    info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
     if (vmaCreateAllocator(&info, &allocator_) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create Vulkan Memory Allocator");

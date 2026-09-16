@@ -2,7 +2,8 @@
 
 #include "device.hpp"
 
-Swapchain::Swapchain( const Device& device, vk::Extent2D window_extent ) : device_(&device) {
+Swapchain::Swapchain( const Device& device, vk::Extent2D window_extent, vk::ImageUsageFlags image_usage ) : device_(
+        &device), image_usage_(image_usage) {
     create(window_extent);
 }
 
@@ -64,7 +65,7 @@ void Swapchain::create( const vk::Extent2D window_extent ) {
     create_info.setImageColorSpace(surface_format_.colorSpace);
     create_info.setImageExtent(extent_);
     create_info.setImageArrayLayers(1);
-    create_info.setImageUsage(vk::ImageUsageFlagBits::eColorAttachment);
+    create_info.setImageUsage(image_usage_);
     create_info.setPreTransform(capabilities.currentTransform);
     create_info.setCompositeAlpha(vk::CompositeAlphaFlagBitsKHR::eOpaque);
     create_info.setPresentMode(present_mode_);

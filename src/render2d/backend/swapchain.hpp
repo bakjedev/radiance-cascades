@@ -5,7 +5,8 @@ class Device;
 
 class Swapchain {
 public:
-    Swapchain( const Device& device, vk::Extent2D window_extent );
+    Swapchain( const Device& device, vk::Extent2D window_extent,
+               vk::ImageUsageFlags image_usage = vk::ImageUsageFlagBits::eColorAttachment );
     ~Swapchain();
 
     void recreate( vk::Extent2D window_extent );
@@ -24,6 +25,7 @@ public:
 private:
     const Device* device_;
 
+    vk::ImageUsageFlags image_usage_;
     vk::SurfaceFormatKHR surface_format_{};
     vk::PresentModeKHR present_mode_{};
     vk::Extent2D extent_{};
