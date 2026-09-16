@@ -2,7 +2,10 @@
 
 #include <SDL3/SDL_vulkan.h>
 
+#include "backend/pipeline.hpp"
 #include "src/window.hpp"
+#include "src/resource/resource_manager.hpp"
+#include "src/resource/types/shader_resource.hpp"
 
 std::optional<fwrk::PhysicalImage> FwrkAllocator::create_image( const fwrk::ImageCreateInfo& img_info ) {
     VmaAllocation allocation;
@@ -59,16 +62,19 @@ void FwrkAllocator::destroy_buffer( fwrk::PhysicalBuffer& buf ) {
     vmaDestroyBuffer(allocator, buf.handle, buffer_to_allocation[buf.handle]);
 }
 
-Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher ) : window_(window),
-                                                                              event_dispatcher_(event_dispatcher),
-                                                                              device_(instance_.get(),
-                                                                                  create_surface(window, instance_)),
-                                                                              swapchain_(device_, {
-                                                                                      window.width(), window.height()
-                                                                                  }),
-                                                                              fwrk_allocator_(device_.get_allocator()),
-                                                                              context_(device_.get(),
-                                                                                  frames_in_flight, fwrk_allocator_) {
+Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher,
+                        ResourceManager<ShaderResource>& resource_manager,
+                        FileSystem& file_system ) : window_(window),
+                                                    event_dispatcher_(event_dispatcher),
+                                                    resource_manager_(resource_manager), file_system_(file_system),
+                                                    device_(instance_.get(),
+                                                            create_surface(window, instance_)),
+                                                    swapchain_(device_, {
+                                                                   window.width(), window.height()
+                                                               }),
+                                                    fwrk_allocator_(device_.get_allocator()),
+                                                    context_(device_.get(),
+                                                             frames_in_flight, fwrk_allocator_) {
     for (Frame& frame : frames_) {
         create_frame(frame, device_);
     }
@@ -81,6 +87,17 @@ Renderer2D::Renderer2D( Window& window, EventDispatcher& event_dispatcher ) : wi
 
     import_resources();
     swapchain_proxy_ = context_.create_proxy();
+
+    auto shader_resource = resource_manager_.create_from_file<ShaderResource>(
+        "basic.comp.spv", ShaderResourceLoader{&file_system_});
+
+    shader_module_ = create_shader_module(device_.get(), shader_resource->code);
+
+    pipeline_layout_ = create_pipeline_layout(device_.get(), {}, {});
+
+    const ComputePipelineDesc desc{.module = shader_module_.get(), .layout = pipeline_layout_.get()};
+
+    pipeline_ = create_compute_pipeline(device_.get(), desc);
 }
 
 Renderer2D::~Renderer2D() {

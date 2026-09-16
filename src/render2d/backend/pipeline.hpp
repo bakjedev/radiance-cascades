@@ -11,15 +11,10 @@ inline vk::UniquePipelineLayout create_pipeline_layout(
     );
 }
 
-struct ShaderStage {
-    vk::ShaderStageFlagBits stage;
+struct ComputePipelineDesc {
     vk::ShaderModule module;
     std::string entry = "main";
     const vk::SpecializationInfo* specialization = nullptr;
-};
-
-struct ComputePipelineDesc {
-    ShaderStage shader_stage;
     vk::PipelineLayout layout;
     vk::PipelineCreateFlags flags{};
 };
@@ -28,9 +23,9 @@ inline vk::UniquePipeline create_compute_pipeline( vk::Device device, const Comp
                                                    vk::UniquePipelineCache cache = {} ) {
     vk::PipelineShaderStageCreateInfo stage{};
     stage.setStage(vk::ShaderStageFlagBits::eCompute);
-    stage.setModule(desc.shader_stage.module);
-    stage.setPName(desc.shader_stage.entry.c_str());
-    stage.setPSpecializationInfo(desc.shader_stage.specialization);
+    stage.setModule(desc.module);
+    stage.setPName(desc.entry.c_str());
+    stage.setPSpecializationInfo(desc.specialization);
 
     vk::ComputePipelineCreateInfo create_info{};
     create_info.setFlags(desc.flags);
@@ -64,6 +59,13 @@ inline constexpr auto blend_alpha = [] {
     blend.setAlphaBlendOp(vk::BlendOp::eAdd);
     return blend;
 }();
+
+struct ShaderStage {
+    vk::ShaderStageFlagBits stage;
+    vk::ShaderModule module;
+    std::string entry = "main";
+    const vk::SpecializationInfo* specialization = nullptr;
+};
 
 struct GraphicsPipelineDesc {
     std::vector<ShaderStage> stages;
@@ -143,4 +145,16 @@ inline vk::UniquePipeline create_graphics_pipeline( vk::Device device, const Gra
         return {};
     }
     return std::move(pipeline);
+}
+
+inline vk::UniqueShaderModule create_shader_module( vk::Device device, const std::span<const std::byte> code,
+                                                    const vk::ShaderModuleCreateFlags flags = {} ) {
+    if (code.empty() || code.size() % sizeof(uint32_t) != 0) {
+        throw std::runtime_error(
+            "Shader code size must be non zero and a multiple of 4. Size: " + std::to_string(code.size()));
+    }
+
+    return device.createShaderModuleUnique(vk::ShaderModuleCreateInfo{
+        flags, code.size(), reinterpret_cast<const uint32_t*>(code.data())
+    });
 }

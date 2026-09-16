@@ -30,6 +30,7 @@ sources = files(
     'src/window.cpp',
     'src/file_system.cpp',
     'src/input.cpp',
+    'src/resource/types/shader_resource.cpp',
     'src/render2d/renderer_2d.cpp',
     'src/render2d/backend/instance.cpp',
     'src/render2d/backend/device.cpp',
@@ -41,7 +42,8 @@ glslc = find_program('glslc')
 
 shaders = [
     'basic.vert',
-    'basic.frag'
+    'basic.frag',
+    'basic.comp',
 ]
 
 compiled_shaders = []

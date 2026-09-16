@@ -1,4 +1,8 @@
 #pragma once
+#include <string>
+#include <vector>
+
+class FileSystem;
 
 struct ShaderResource {
     std::vector<std::byte> code;
@@ -6,13 +10,7 @@ struct ShaderResource {
 
 
 struct ShaderResourceLoader {
-    ShaderResource operator()( const std::string& path ) const {
-        auto data = file_system->read_binary(path);
-        if (!data) {
-            throw std::runtime_error("Failed to load shader: " + path);
-        }
-        return ShaderResource{.code = std::move(*data)};
-    }
+    ShaderResource operator()( const std::string& path ) const;
 
     FileSystem* file_system;
 };

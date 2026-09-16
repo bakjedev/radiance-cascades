@@ -8,6 +8,11 @@
 class Window;
 class EventDispatcher;
 
+template<typename... Ts>
+class ResourceManager;
+class ShaderResource;
+class FileSystem;
+
 constexpr uint32_t frames_in_flight = 2;
 
 struct FwrkAllocator : fwrk::Allocator {
@@ -26,7 +31,8 @@ struct FwrkAllocator : fwrk::Allocator {
 
 class Renderer2D {
 public:
-    Renderer2D( Window& window, EventDispatcher& event_dispatcher );
+    Renderer2D( Window& window, EventDispatcher& event_dispatcher, ResourceManager<ShaderResource>& resource_manager,
+                FileSystem& file_system );
     ~Renderer2D();
 
     void render();
@@ -38,12 +44,18 @@ private:
 
     Window& window_;
     EventDispatcher& event_dispatcher_;
+    ResourceManager<ShaderResource>& resource_manager_;
+    FileSystem& file_system_;
 
     Instance instance_;
     Device device_;
     Swapchain swapchain_;
     std::array<Frame, frames_in_flight> frames_;
     std::vector<vk::UniqueSemaphore> submit_semaphores_;
+
+    vk::UniquePipelineLayout pipeline_layout_;
+    vk::UniqueShaderModule shader_module_;
+    vk::UniquePipeline pipeline_;
 
     uint32_t current_frame_{};
     uint32_t image_index_{};
