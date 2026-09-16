@@ -24,11 +24,14 @@ void Application::run() {
         poll_events();
         input_.end_frame();
 
-        renderer_.render();
-
         if (input_.key_pressed(KeyboardKey::Space)) {
             std::cout << "Jump!\n";
         }
+        if (input_.key_down(KeyboardKey::Escape)) {
+            running = false;
+        }
+
+        renderer_.render();
     }
 
     event_dispatcher_.remove(quit_event_listener);
