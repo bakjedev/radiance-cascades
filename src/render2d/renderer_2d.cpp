@@ -148,10 +148,16 @@ void Renderer2D::run_frame()
         .set_image_transfer_src({.resource = {.id = scene_image_import_}})
         .set_image_transfer_dst({.resource = {.id = swapchain_proxy_}})
         .set_execute([this](vk::CommandBuffer cmd) {
-          constexpr vk::ImageBlit blit{{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                                       {{{0, 0, 0}, {256, 256, 1}}},
-                                       {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                                       {{{420, 0, 0}, {1500, 1080, 1}}}};
+          const auto img_w = scene_image_->extent().width;
+          const auto img_h = scene_image_->extent().height;
+          const auto swp_w = swapchain_.extent().width;
+          const auto swp_h = swapchain_.extent().height;
+          const auto sx = static_cast<int32_t>(swp_w) / 2 - static_cast<int32_t>(swp_h) / 2;
+
+          const vk::ImageBlit blit{{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                   {{{0, 0, 0}, {static_cast<int32_t>(img_w), static_cast<int32_t>(img_h), 1}}},
+                                   {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                   {{{sx, 0, 0}, {static_cast<int32_t>(swp_w) - sx, static_cast<int32_t>(swp_h), 1}}}};
 
           cmd.blitImage(scene_image_->image(), vk::ImageLayout::eTransferSrcOptimal, swapchain_.image(image_index_),
                         vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eNearest);
