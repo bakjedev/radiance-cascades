@@ -1,4 +1,6 @@
 #include "application.hpp"
+
+#include <cmath>
 #include <iostream>
 #include "resource/types/shader_resource.hpp"
 
@@ -29,6 +31,17 @@ void Application::run()
     }
     if (input_.key_down(KeyboardKey::Escape)) {
       running = false;
+    }
+
+    if (input_.mouse_down(MouseButton::Left)) {
+      auto [mouse_x, mouse_y] = std::pair{input_.mouse_x(), input_.mouse_y()};
+      const float u = (mouse_x - 420.0f) / 1080.0f;
+      const float v = mouse_y / 1080.0f;
+
+      const auto px = static_cast<int32_t>(std::floor(u * 256)) - 1;
+      const auto py = static_cast<int32_t>(std::floor(v * 256)) - 1;
+
+      renderer_.plot({px, py});
     }
 
     renderer_.render();

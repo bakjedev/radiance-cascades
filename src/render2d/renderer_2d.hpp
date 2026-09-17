@@ -24,6 +24,8 @@ public:
 
   void render();
 
+  void plot(const std::pair<int32_t, int32_t>& pos);
+
 private:
   bool begin_frame();
   void run_frame();
@@ -59,6 +61,9 @@ private:
   fwrk::ResourceID swapchain_proxy_;
   fwrk::ResourceID scene_image_import_;
   bool should_compile_ = true;
+
+  bool should_draw_ = false;
+  std::pair<int32_t, int32_t> draw_pos_;
 
   void import_resources();
 

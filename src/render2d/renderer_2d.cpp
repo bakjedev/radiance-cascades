@@ -8,6 +8,13 @@
 #include "src/resource/types/shader_resource.hpp"
 #include "src/window.hpp"
 
+struct PushConstant {
+  int32_t x;
+  int32_t y;
+  int32_t w;
+  int32_t h;
+};
+
 Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource_manager, FileSystem& file_system) :
     window_(window), resource_manager_(resource_manager), file_system_(file_system),
     device_(instance_.get(), create_surface(window, instance_)),
@@ -53,13 +60,14 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
       .add_image(0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
       .update(device_.get(), descriptor_set_);
 
+  vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(int32_t) * 4};
 
   auto shader_resource =
       resource_manager_.create_from_file<ShaderResource>("basic.comp.spv", ShaderResourceLoader{&file_system_});
 
   shader_module_ = create_shader_module(device_.get(), shader_resource->code);
 
-  pipeline_layout_ = create_pipeline_layout(device_.get(), {&descriptor_set_layout_.get(), 1}, {});
+  pipeline_layout_ = create_pipeline_layout(device_.get(), {&descriptor_set_layout_.get(), 1}, {&push, 1});
 
   const ComputePipelineDesc desc{.module = shader_module_.get(), .layout = pipeline_layout_.get()};
 
@@ -74,6 +82,11 @@ void Renderer2D::render()
     run_frame();
     end_frame();
   }
+}
+void Renderer2D::plot(const std::pair<int32_t, int32_t>& pos)
+{
+  should_draw_ = true;
+  draw_pos_ = pos;
 }
 
 bool Renderer2D::begin_frame()
@@ -109,12 +122,25 @@ void Renderer2D::run_frame()
     graph.add_compute_pass()
         .set_storage_image_write({.resource = {.id = scene_image_import_}})
         .set_execute([this](vk::CommandBuffer cmd) {
+          if (!should_draw_) return;
+          should_draw_ = false;
+
           cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pipeline_layout_.get(), 0, 1, &descriptor_set_, 0,
                                  nullptr);
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline_.get());
 
-          constexpr uint32_t gx = (256 + 7) / 8;
-          constexpr uint32_t gy = (256 + 7) / 8;
+          const PushConstant push_constant{
+              .x = draw_pos_.first,
+              .y = draw_pos_.second,
+              .w = 3,
+              .h = 3,
+          };
+
+          cmd.pushConstants(pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(PushConstant),
+                            &push_constant);
+
+          constexpr uint32_t gx = (3 + 7) / 8;
+          constexpr uint32_t gy = (3 + 7) / 8;
           cmd.dispatch(gx, gy, 1);
         });
 
