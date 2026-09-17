@@ -3,11 +3,11 @@
 
 class Instance {
 public:
-    Instance();
+  Instance();
 
-    [[nodiscard]] vk::Instance get() const { return instance_.get(); }
+  [[nodiscard]] vk::Instance get() const { return instance_.get(); }
 
 private:
-    vk::UniqueInstance instance_;
-    vk::UniqueDebugUtilsMessengerEXT messenger_;
+  vk::UniqueInstance instance_;
+  vk::UniqueDebugUtilsMessengerEXT messenger_;
 };
