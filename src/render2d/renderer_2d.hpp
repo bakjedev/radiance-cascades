@@ -51,6 +51,8 @@ private:
 
   std::optional<Image> scene_image_;
   vk::UniqueImageView scene_image_view_;
+  std::optional<Image> jfa_image_;
+  vk::UniqueImageView jfa_image_view_;
 
   uint32_t current_frame_{};
   uint32_t image_index_{};
@@ -60,7 +62,10 @@ private:
   std::vector<fwrk::ResourceID> swapchain_imports_;
   fwrk::ResourceID swapchain_proxy_;
   fwrk::ResourceID scene_image_import_;
+  fwrk::ResourceID jfa_image_import_;
   bool should_compile_ = true;
+
+  bool cleared_jfa_ = false;
 
   bool should_draw_ = false;
   std::pair<int32_t, int32_t> draw_pos_;

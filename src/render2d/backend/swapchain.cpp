@@ -73,7 +73,7 @@ void Swapchain::create(const vk::Extent2D window_extent)
   create_info.setCompositeAlpha(vk::CompositeAlphaFlagBitsKHR::eOpaque);
   create_info.setPresentMode(present_mode_);
   create_info.setClipped(vk::True);
-  create_info.oldSwapchain = swapchain_.get();
+  create_info.oldSwapchain = old_swapchain_.get();
   create_info.setImageSharingMode(vk::SharingMode::eExclusive);
 
   swapchain_ = device_->get().createSwapchainKHRUnique(create_info);

@@ -40,14 +40,31 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
                                       vk::ImageUsageFlagBits::eTransferSrc));
   scene_image_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
 
+  jfa_image_.emplace(device_.get_allocator(),
+                     ImageDesc{}
+                         .set_extent(256, 256)
+                         .set_format(vk::Format::eR32G32Sint)
+                         .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc |
+                                    vk::ImageUsageFlagBits::eTransferDst));
+  jfa_image_view_ = jfa_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+
+  fwrk::ImageImportInfo image_import_info{.type = VK_IMAGE_TYPE_2D,
+                                          .size = {.width = 256, .height = 256, .depth = 1},
+                                          .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                          .state = fwrk::PhysicalState::Undefined};
+  scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
+  image_import_info.format = VK_FORMAT_R32G32_SINT;
+  jfa_image_import_ = context_.import_image(image_import_info, jfa_image_->image());
+
   import_resources();
   swapchain_proxy_ = context_.create_proxy();
 
   descriptor_set_layout_ = create_descriptor_set_layout(
-      device_.get(),
-      DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute));
+      device_.get(), DescriptorSetLayoutDesc{}
+                         .add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute)
+                         .add_binding(1, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute));
 
-  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1}};
+  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 2}};
   descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 1);
 
   descriptor_set_ = device_.get()
@@ -58,6 +75,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
 
   DescriptorWriter{}
       .add_image(0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(1, vk::DescriptorType::eStorageImage, jfa_image_view_.get(), vk::ImageLayout::eGeneral)
       .update(device_.get(), descriptor_set_);
 
   vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(int32_t) * 4};
@@ -119,8 +137,24 @@ void Renderer2D::run_frame()
   fwrk::Graph& graph = context_.graph();
 
   if (should_compile_) {
+    should_compile_ = false;
+
+    if (!cleared_jfa_) {
+      graph.add_compute_pass()
+          .set_image_transfer_dst({.resource = {.id = jfa_image_import_}})
+          .set_execute([this](vk::CommandBuffer cmd) {
+            constexpr vk::ClearColorValue color{-1, -1, 0, 0};
+            constexpr vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+
+            cmd.clearColorImage(vk::Image{jfa_image_->image()}, vk::ImageLayout::eTransferDstOptimal, color, range);
+          });
+      should_compile_ = true;
+      cleared_jfa_ = true;
+    }
+
     graph.add_compute_pass()
         .set_storage_image_write({.resource = {.id = scene_image_import_}})
+        .set_storage_image_write({.resource = {.id = jfa_image_import_}})
         .set_execute([this](vk::CommandBuffer cmd) {
           if (!should_draw_) return;
           should_draw_ = false;
@@ -167,7 +201,6 @@ void Renderer2D::run_frame()
                               {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
 
     graph.compile();
-    should_compile_ = false;
   }
 
 
@@ -223,16 +256,6 @@ void Renderer2D::import_resources()
     } else {
       res = context_.import_image(swapchain_image_info, swapchain_.image(i), "Swapchain image");
     }
-  }
-
-  constexpr fwrk::ImageImportInfo scene_image_info{.type = VK_IMAGE_TYPE_2D,
-                                                   .size = {.width = 256, .height = 256, .depth = 1},
-                                                   .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                                   .state = fwrk::PhysicalState::Undefined};
-  if (scene_image_import_) {
-    context_.update_image(scene_image_import_, scene_image_info, scene_image_->image());
-  } else {
-    scene_image_import_ = context_.import_image(scene_image_info, scene_image_->image());
   }
 }
 
