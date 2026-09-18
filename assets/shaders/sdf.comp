@@ -1,0 +1,14 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0, rg32i) uniform iimage2D jfa_img;
+layout(binding = 1, rgba8) uniform image2D sdf_img;
+
+void main() {
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(local, ivec2(256)))) return;
+    ivec2 seed = imageLoad(jfa_img, local).xy;
+    float dist = distance(vec2(local), vec2(seed));
+    float t = dist / 100.0;
+    imageStore(sdf_img, local, vec4(t, 0.0, 0.0, 1.0));
+}

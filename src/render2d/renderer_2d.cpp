@@ -54,7 +54,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
   // Descriptors
   // ----------------------------------------
   std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 16}};
-  descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 8);
+  descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 10);
 
   // Draw
   {
@@ -100,6 +100,17 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
     }
   }
 
+  // SDF
+  {
+    for (auto& sdf_descriptor_set: sdf_descriptor_sets_) {
+      sdf_descriptor_set = device_.get()
+                               .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
+                                                           .setDescriptorPool(*descriptor_pool_)
+                                                           .setSetLayouts(*convert_descriptor_set_layout_))
+                               .front();
+    }
+  }
+
   DescriptorWriter{}
       .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
       .update(device_.get(), draw_descriptor_set_)
@@ -109,8 +120,10 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
       .update(device_.get(), convert_descriptor_sets_.at(1));
 
   // ----------------------------------------
-  // Draw pipeline
+  // Pipelines
   // ----------------------------------------
+
+  // Draw pipeline
   {
     vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(int32_t) * 4};
 
@@ -128,10 +141,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
     draw_pipeline_ = create_compute_pipeline(device_.get(), draw_pipeline_desc);
   }
 
-  // ----------------------------------------
   // Convert pipeline
-  // ----------------------------------------
-
   {
     auto convert_shader_resource =
         resource_manager_.create_from_file<ShaderResource>("convert.comp.spv", ShaderResourceLoader{&file_system_});
@@ -146,9 +156,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
     convert_pipeline_ = create_compute_pipeline(device_.get(), convert_pipeline_desc);
   }
 
-  // ----------------------------------------
   // JFA pipeline
-  // ----------------------------------------
   {
     vk::PushConstantRange jfa_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(uint32_t) * 3};
 
@@ -164,6 +172,19 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
                                                 .layout = jfa_pipeline_layout_.get()};
 
     jfa_pipeline_ = create_compute_pipeline(device_.get(), jfa_pipeline_desc);
+  }
+
+  // SDF pipeline
+  {
+    auto sdf_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("sdf.comp.spv", ShaderResourceLoader{&file_system_});
+
+    sdf_shader_module_ = create_shader_module(device_.get(), sdf_shader_resource->code);
+
+    const ComputePipelineDesc sdf_pipeline_desc{.module = sdf_shader_module_.get(),
+                                                .layout = convert_pipeline_layout_.get()};
+
+    sdf_pipeline_ = create_compute_pipeline(device_.get(), sdf_pipeline_desc);
   }
 
   // ----------------------------------------
@@ -235,9 +256,12 @@ void Renderer2D::run_frame()
                                       .layers = 1,
                                       .samples = VK_SAMPLE_COUNT_1_BIT,
                                       .tiling = VK_IMAGE_TILING_OPTIMAL,
-                                      .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT};
+                                      .usage = VK_IMAGE_USAGE_STORAGE_BIT};
     const fwrk::ResourceID jfa_1 = graph.create_image(create_info);
     const fwrk::ResourceID jfa_2 = graph.create_image(create_info);
+    create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    create_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    const fwrk::ResourceID sdf = graph.create_image(create_info);
 
     graph.add_compute_pass()
         .set_storage_image_write({.resource = {.id = scene_image_import_}})
@@ -321,9 +345,22 @@ void Renderer2D::run_frame()
         });
 
     graph.add_compute_pass()
-        .set_image_transfer_src({.resource = {.id = scene_image_import_}})
-        .set_image_transfer_dst({.resource = {.id = swapchain_proxy_}})
+        .set_storage_image_read({.resource = {.id = jfa_2}})
+        .set_storage_image_write({.resource = {.id = sdf}})
         .set_execute([this](vk::CommandBuffer cmd) {
+          cmd.bindPipeline(vk::PipelineBindPoint::eCompute, sdf_pipeline_.get());
+          cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, convert_pipeline_layout_.get(), 0, 1,
+                                 &sdf_descriptor_sets_.at(current_frame_), 0, nullptr);
+
+          constexpr uint32_t gx = (256 + 7) / 8;
+          constexpr uint32_t gy = (256 + 7) / 8;
+          cmd.dispatch(gx, gy, 1);
+        });
+
+    graph.add_compute_pass()
+        .set_image_transfer_src({.resource = {.id = sdf}})
+        .set_image_transfer_dst({.resource = {.id = swapchain_proxy_}})
+        .set_execute([this, sdf](vk::CommandBuffer cmd) {
           const auto img_w = scene_image_->extent().width;
           const auto img_h = scene_image_->extent().height;
           const auto swp_w = swapchain_.extent().width;
@@ -335,8 +372,9 @@ void Renderer2D::run_frame()
                                    {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
                                    {{{sx, 0, 0}, {static_cast<int32_t>(swp_w) - sx, static_cast<int32_t>(swp_h), 1}}}};
 
-          cmd.blitImage(scene_image_->image(), vk::ImageLayout::eTransferSrcOptimal, swapchain_.image(image_index_),
-                        vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eNearest);
+          cmd.blitImage(context_.get_raw_image(sdf), vk::ImageLayout::eTransferSrcOptimal,
+                        swapchain_.image(image_index_), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
+                        vk::Filter::eNearest);
         });
 
     graph.set_image_end_state(swapchain_proxy_,
@@ -384,7 +422,19 @@ void Renderer2D::run_frame()
                    vk::ImageLayout::eGeneral)
         .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
                    vk::ImageLayout::eGeneral)
-        .update(device_.get(), jfa_descriptor_sets_.at(3));
+        .update(device_.get(), jfa_descriptor_sets_.at(3))
+        .clear()
+        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
+                   vk::ImageLayout::eGeneral)
+        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 0),
+                   vk::ImageLayout::eGeneral)
+        .update(device_.get(), sdf_descriptor_sets_.at(0))
+        .clear()
+        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
+                   vk::ImageLayout::eGeneral)
+        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 1),
+                   vk::ImageLayout::eGeneral)
+        .update(device_.get(), sdf_descriptor_sets_.at(1));
   }
 
   context_.update_proxy(swapchain_proxy_, swapchain_imports_[image_index_]);
