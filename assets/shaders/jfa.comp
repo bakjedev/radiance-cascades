@@ -1,9 +1,10 @@
 #version 450
 
+layout(constant_id = 0) const uint img_width = 0;
+layout(constant_id = 1) const uint img_height = 0;
+
 layout(push_constant) uniform PushConstant {
     uint k;
-    int w;
-    int h;
 } pushConstants;
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -23,14 +24,14 @@ ivec2 directions[] = ivec2[](
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(local, ivec2(pushConstants.w, pushConstants.h)))) return;
+    if (any(greaterThanEqual(local, ivec2(img_width, img_height)))) return;
 
     ivec2 closest_seed = ivec2(-1);
     int closest_dist = 9999999;
     for (int i = 0; i < 9; i++) {
         ivec2 dir = directions[i] * ivec2(pushConstants.k);
         ivec2 coord = local + dir;
-        if (any(greaterThanEqual(coord, ivec2(pushConstants.w, pushConstants.h))) || any(lessThan(coord, ivec2(0)))) continue;
+        if (any(greaterThanEqual(coord, ivec2(img_width, img_height))) || any(lessThan(coord, ivec2(0)))) continue;
         ivec2 offset_point = imageLoad(jfa_imgs[0], coord).xy;
         if (offset_point.x < 0) continue;
         ivec2 d = offset_point - local;

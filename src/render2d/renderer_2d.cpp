@@ -18,8 +18,11 @@ struct DrawPushConstant {
 
 struct JFAPushConstant {
   uint32_t k;
-  int32_t w;
-  int32_t h;
+};
+
+struct SpecialData {
+  uint32_t image_width;
+  uint32_t image_height;
 };
 
 Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource_manager, FileSystem& file_system) :
@@ -123,9 +126,17 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
   // Pipelines
   // ----------------------------------------
 
+  SpecialData special_data{.image_width = 256, .image_height = 256};
+  std::array<vk::SpecializationMapEntry, 2> entries{{{0, offsetof(SpecialData, image_width), sizeof(uint32_t)},
+                                                     {1, offsetof(SpecialData, image_height), sizeof(uint32_t)}}};
+  vk::SpecializationInfo specialization_info{};
+  specialization_info.setMapEntries(entries);
+  specialization_info.setData<SpecialData>(special_data);
+
+
   // Draw pipeline
   {
-    vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(int32_t) * 4};
+    vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant)};
 
     auto draw_shader_resource =
         resource_manager_.create_from_file<ShaderResource>("draw.comp.spv", ShaderResourceLoader{&file_system_});
@@ -136,6 +147,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
         create_pipeline_layout(device_.get(), {&draw_descriptor_set_layout_.get(), 1}, {&draw_push, 1});
 
     const ComputePipelineDesc draw_pipeline_desc{.module = draw_shader_module_.get(),
+                                                 .specialization = &specialization_info,
                                                  .layout = draw_pipeline_layout_.get()};
 
     draw_pipeline_ = create_compute_pipeline(device_.get(), draw_pipeline_desc);
@@ -158,7 +170,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
 
   // JFA pipeline
   {
-    vk::PushConstantRange jfa_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(uint32_t) * 3};
+    vk::PushConstantRange jfa_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant)};
 
     auto jfa_shader_resource =
         resource_manager_.create_from_file<ShaderResource>("jfa.comp.spv", ShaderResourceLoader{&file_system_});
@@ -169,6 +181,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
         create_pipeline_layout(device_.get(), {&jfa_descriptor_set_layout_.get(), 1}, {&jfa_push, 1});
 
     const ComputePipelineDesc jfa_pipeline_desc{.module = jfa_shader_module_.get(),
+                                                .specialization = &specialization_info,
                                                 .layout = jfa_pipeline_layout_.get()};
 
     jfa_pipeline_ = create_compute_pipeline(device_.get(), jfa_pipeline_desc);
@@ -326,10 +339,10 @@ void Renderer2D::run_frame()
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1,
                                    &jfa_descriptor_sets_.at((use_jfa_1 ? 0 : 1) + current_frame_ * 2), 0, nullptr);
 
-            const JFAPushConstant push_constant{.k = k_start >> i, .w = 256, .h = 256};
+            const JFAPushConstant push_constant{.k = k_start >> i};
 
-            cmd.pushConstants(draw_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
-                              sizeof(JFAPushConstant), &push_constant);
+            cmd.pushConstants(jfa_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant),
+                              &push_constant);
 
             constexpr uint32_t gx = (256 + 7) / 8;
             constexpr uint32_t gy = (256 + 7) / 8;
@@ -391,7 +404,7 @@ void Renderer2D::run_frame()
     subresource_range.setLayerCount(1);
     const fwrk::ViewKey view_key{subresource_range, VK_IMAGE_VIEW_TYPE_2D};
 
-    DescriptorWriter{}
+    DescriptorWriter{} // jfa1 both FIF
         .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
                    vk::ImageLayout::eGeneral)
         .update(device_.get(), convert_descriptor_sets_.at(0))
@@ -400,6 +413,7 @@ void Renderer2D::run_frame()
                    vk::ImageLayout::eGeneral)
         .update(device_.get(), convert_descriptor_sets_.at(1))
         .clear()
+        // jfa 1 and 2 for both FIF
         .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
                    vk::ImageLayout::eGeneral)
         .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
@@ -424,6 +438,7 @@ void Renderer2D::run_frame()
                    vk::ImageLayout::eGeneral)
         .update(device_.get(), jfa_descriptor_sets_.at(3))
         .clear()
+        // sdf for both FIF
         .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
                    vk::ImageLayout::eGeneral)
         .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 0),
