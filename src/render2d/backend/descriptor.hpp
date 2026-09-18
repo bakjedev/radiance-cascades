@@ -31,33 +31,45 @@ inline vk::UniqueDescriptorPool create_descriptor_pool(vk::Device device, std::s
 
 class DescriptorWriter {
 public:
-  DescriptorWriter& add_image(const uint32_t binding, const vk::DescriptorType type, vk::ImageView view,
-                              vk::ImageLayout layout, vk::Sampler sampler = {})
+  DescriptorWriter& add_image(const uint32_t binding, const uint32_t array_element, const vk::DescriptorType type,
+                              vk::ImageView view, vk::ImageLayout layout, vk::Sampler sampler = {})
   {
     auto& info = image_infos_.emplace_back(sampler, view, layout);
-    writes_.push_back(vk::WriteDescriptorSet{}.setDstBinding(binding).setDescriptorType(type).setImageInfo(info));
+    writes_.push_back(vk::WriteDescriptorSet{}
+                          .setDstBinding(binding)
+                          .setDstArrayElement(array_element)
+                          .setDescriptorCount(1)
+                          .setDescriptorType(type)
+                          .setImageInfo(info));
     return *this;
   }
 
-  DescriptorWriter& add_buffer(const uint32_t binding, const vk::DescriptorType type, vk::Buffer buf,
-                               vk::DeviceSize offset = 0, vk::DeviceSize range = vk::WholeSize)
+  DescriptorWriter& add_buffer(const uint32_t binding, const uint32_t array_element, const vk::DescriptorType type,
+                               vk::Buffer buf, vk::DeviceSize offset = 0, vk::DeviceSize range = vk::WholeSize)
   {
     auto& info = buffer_infos_.emplace_back(buf, offset, range);
-    writes_.push_back(vk::WriteDescriptorSet{}.setDstBinding(binding).setDescriptorType(type).setBufferInfo(info));
+    writes_.push_back(vk::WriteDescriptorSet{}
+                          .setDstBinding(binding)
+                          .setDstArrayElement(array_element)
+                          .setDescriptorCount(1)
+                          .setDescriptorType(type)
+                          .setBufferInfo(info));
     return *this;
   }
 
-  void update(vk::Device device, vk::DescriptorSet set)
+  DescriptorWriter& update(vk::Device device, vk::DescriptorSet set)
   {
     for (auto& write: writes_) write.setDstSet(set);
     device.updateDescriptorSets(writes_, {});
+    return *this;
   }
 
-  void clear()
+  DescriptorWriter& clear()
   {
     image_infos_.clear();
     buffer_infos_.clear();
     writes_.clear();
+    return *this;
   }
 
 private:

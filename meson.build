@@ -42,9 +42,9 @@ sources = files(
 glslc = find_program('glslc')
 
 shaders = [
-    'basic.vert',
-    'basic.frag',
-    'basic.comp',
+    'draw.comp',
+    'convert.comp',
+    'jfa.comp',
 ]
 
 compiled_shaders = []

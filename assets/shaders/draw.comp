@@ -7,12 +7,10 @@ layout(push_constant) uniform PushConstant {
 
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0, rgba16f) uniform image2D img;
-layout(binding = 1, rg32i) uniform iimage2D jfa_img;
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(local, pushConstants.size))) return;
     ivec2 coord = local + pushConstants.pos;
     imageStore(img, coord, vec4(1.0, 0.0, 1.0, 1.0));
-    imageStore(jfa_img, coord, ivec4(coord, 0.0, 0.0));
 }

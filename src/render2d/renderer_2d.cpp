@@ -1,6 +1,7 @@
 #include "renderer_2d.hpp"
 
 #include <SDL3/SDL_vulkan.h>
+#include <cmath>
 
 #include "backend/descriptor.hpp"
 #include "backend/pipeline.hpp"
@@ -8,9 +9,15 @@
 #include "src/resource/types/shader_resource.hpp"
 #include "src/window.hpp"
 
-struct PushConstant {
+struct DrawPushConstant {
   int32_t x;
   int32_t y;
+  int32_t w;
+  int32_t h;
+};
+
+struct JFAPushConstant {
+  uint32_t k;
   int32_t w;
   int32_t h;
 };
@@ -32,6 +39,9 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
     semaphore = device_.get().createSemaphoreUnique(semaphore_create_info);
   }
 
+  // ----------------------------------------
+  // Images
+  // ----------------------------------------
   scene_image_.emplace(device_.get_allocator(),
                        ImageDesc{}
                            .set_extent(256, 256)
@@ -40,56 +50,134 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
                                       vk::ImageUsageFlagBits::eTransferSrc));
   scene_image_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
 
-  jfa_image_.emplace(device_.get_allocator(),
-                     ImageDesc{}
-                         .set_extent(256, 256)
-                         .set_format(vk::Format::eR32G32Sint)
-                         .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc |
-                                    vk::ImageUsageFlagBits::eTransferDst));
-  jfa_image_view_ = jfa_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  // ----------------------------------------
+  // Descriptors
+  // ----------------------------------------
+  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 16}};
+  descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 8);
 
+  // Draw
+  {
+    draw_descriptor_set_layout_ = create_descriptor_set_layout(
+        device_.get(),
+        DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute));
+
+    draw_descriptor_set_ = device_.get()
+                               .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
+                                                           .setDescriptorPool(*descriptor_pool_)
+                                                           .setSetLayouts(*draw_descriptor_set_layout_))
+                               .front();
+  }
+
+  // Convert
+  {
+    convert_descriptor_set_layout_ = create_descriptor_set_layout(
+        device_.get(), DescriptorSetLayoutDesc{}
+                           .add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute)
+                           .add_binding(1, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute));
+
+    for (auto& convert_descriptor_set: convert_descriptor_sets_) {
+      convert_descriptor_set = device_.get()
+                                   .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
+                                                               .setDescriptorPool(*descriptor_pool_)
+                                                               .setSetLayouts(*convert_descriptor_set_layout_))
+                                   .front();
+    }
+  }
+
+  // JFA
+  {
+    jfa_descriptor_set_layout_ = create_descriptor_set_layout(
+        device_.get(), DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage,
+                                                             vk::ShaderStageFlagBits::eCompute, 2));
+
+    for (auto& jfa_descriptor_set: jfa_descriptor_sets_) {
+      jfa_descriptor_set = device_.get()
+                               .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
+                                                           .setDescriptorPool(*descriptor_pool_)
+                                                           .setSetLayouts(*jfa_descriptor_set_layout_))
+                               .front();
+    }
+  }
+
+  DescriptorWriter{}
+      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
+      .update(device_.get(), draw_descriptor_set_)
+      .clear()
+      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
+      .update(device_.get(), convert_descriptor_sets_.at(0))
+      .update(device_.get(), convert_descriptor_sets_.at(1));
+
+  // ----------------------------------------
+  // Draw pipeline
+  // ----------------------------------------
+  {
+    vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(int32_t) * 4};
+
+    auto draw_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("draw.comp.spv", ShaderResourceLoader{&file_system_});
+
+    draw_shader_module_ = create_shader_module(device_.get(), draw_shader_resource->code);
+
+    draw_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&draw_descriptor_set_layout_.get(), 1}, {&draw_push, 1});
+
+    const ComputePipelineDesc draw_pipeline_desc{.module = draw_shader_module_.get(),
+                                                 .layout = draw_pipeline_layout_.get()};
+
+    draw_pipeline_ = create_compute_pipeline(device_.get(), draw_pipeline_desc);
+  }
+
+  // ----------------------------------------
+  // Convert pipeline
+  // ----------------------------------------
+
+  {
+    auto convert_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("convert.comp.spv", ShaderResourceLoader{&file_system_});
+
+    convert_shader_module_ = create_shader_module(device_.get(), convert_shader_resource->code);
+
+    convert_pipeline_layout_ = create_pipeline_layout(device_.get(), {&convert_descriptor_set_layout_.get(), 1}, {});
+
+    const ComputePipelineDesc convert_pipeline_desc{.module = convert_shader_module_.get(),
+                                                    .layout = convert_pipeline_layout_.get()};
+
+    convert_pipeline_ = create_compute_pipeline(device_.get(), convert_pipeline_desc);
+  }
+
+  // ----------------------------------------
+  // JFA pipeline
+  // ----------------------------------------
+  {
+    vk::PushConstantRange jfa_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(uint32_t) * 3};
+
+    auto jfa_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("jfa.comp.spv", ShaderResourceLoader{&file_system_});
+
+    jfa_shader_module_ = create_shader_module(device_.get(), jfa_shader_resource->code);
+
+    jfa_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&jfa_descriptor_set_layout_.get(), 1}, {&jfa_push, 1});
+
+    const ComputePipelineDesc jfa_pipeline_desc{.module = jfa_shader_module_.get(),
+                                                .layout = jfa_pipeline_layout_.get()};
+
+    jfa_pipeline_ = create_compute_pipeline(device_.get(), jfa_pipeline_desc);
+  }
+
+  // ----------------------------------------
+  // Imports
+  // ----------------------------------------
   fwrk::ImageImportInfo image_import_info{.type = VK_IMAGE_TYPE_2D,
                                           .size = {.width = 256, .height = 256, .depth = 1},
                                           .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                                           .state = fwrk::PhysicalState::Undefined};
   scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
   image_import_info.format = VK_FORMAT_R32G32_SINT;
-  jfa_image_import_ = context_.import_image(image_import_info, jfa_image_->image());
 
   import_resources();
   swapchain_proxy_ = context_.create_proxy();
-
-  descriptor_set_layout_ = create_descriptor_set_layout(
-      device_.get(), DescriptorSetLayoutDesc{}
-                         .add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute)
-                         .add_binding(1, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute));
-
-  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 2}};
-  descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 1);
-
-  descriptor_set_ = device_.get()
-                        .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
-                                                    .setDescriptorPool(*descriptor_pool_)
-                                                    .setSetLayouts(*descriptor_set_layout_))
-                        .front();
-
-  DescriptorWriter{}
-      .add_image(0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
-      .add_image(1, vk::DescriptorType::eStorageImage, jfa_image_view_.get(), vk::ImageLayout::eGeneral)
-      .update(device_.get(), descriptor_set_);
-
-  vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(int32_t) * 4};
-
-  auto shader_resource =
-      resource_manager_.create_from_file<ShaderResource>("basic.comp.spv", ShaderResourceLoader{&file_system_});
-
-  shader_module_ = create_shader_module(device_.get(), shader_resource->code);
-
-  pipeline_layout_ = create_pipeline_layout(device_.get(), {&descriptor_set_layout_.get(), 1}, {&push, 1});
-
-  const ComputePipelineDesc desc{.module = shader_module_.get(), .layout = pipeline_layout_.get()};
-
-  pipeline_ = create_compute_pipeline(device_.get(), desc);
 }
 
 Renderer2D::~Renderer2D() { device_.get().waitIdle(); }
@@ -139,43 +227,97 @@ void Renderer2D::run_frame()
   if (should_compile_) {
     should_compile_ = false;
 
-    if (!cleared_jfa_) {
-      graph.add_compute_pass()
-          .set_image_transfer_dst({.resource = {.id = jfa_image_import_}})
-          .set_execute([this](vk::CommandBuffer cmd) {
-            constexpr vk::ClearColorValue color{-1, -1, 0, 0};
-            constexpr vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
-
-            cmd.clearColorImage(vk::Image{jfa_image_->image()}, vk::ImageLayout::eTransferDstOptimal, color, range);
-          });
-      should_compile_ = true;
-      cleared_jfa_ = true;
-    }
+    fwrk::ImageCreateInfo create_info{.type = VK_IMAGE_TYPE_2D,
+                                      .size = {.width = 256, .height = 256, .depth = 1},
+                                      .format = VK_FORMAT_R32G32_SINT,
+                                      .flags = {},
+                                      .mips = 1,
+                                      .layers = 1,
+                                      .samples = VK_SAMPLE_COUNT_1_BIT,
+                                      .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                      .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT};
+    const fwrk::ResourceID jfa_1 = graph.create_image(create_info);
+    const fwrk::ResourceID jfa_2 = graph.create_image(create_info);
 
     graph.add_compute_pass()
         .set_storage_image_write({.resource = {.id = scene_image_import_}})
-        .set_storage_image_write({.resource = {.id = jfa_image_import_}})
+        .set_storage_image_write({.resource = {.id = jfa_1}})
         .set_execute([this](vk::CommandBuffer cmd) {
           if (!should_draw_) return;
           should_draw_ = false;
 
-          cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pipeline_layout_.get(), 0, 1, &descriptor_set_, 0,
-                                 nullptr);
-          cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline_.get());
+          cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, draw_pipeline_layout_.get(), 0, 1,
+                                 &draw_descriptor_set_, 0, nullptr);
+          cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
-          const PushConstant push_constant{
+          const DrawPushConstant push_constant{
               .x = draw_pos_.first,
               .y = draw_pos_.second,
               .w = 3,
               .h = 3,
           };
 
-          cmd.pushConstants(pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(PushConstant),
+          cmd.pushConstants(draw_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant),
                             &push_constant);
 
           constexpr uint32_t gx = (3 + 7) / 8;
           constexpr uint32_t gy = (3 + 7) / 8;
           cmd.dispatch(gx, gy, 1);
+        });
+
+    graph.add_compute_pass()
+        .set_storage_image_read({.resource = {.id = scene_image_import_}})
+        .set_storage_image_write({.resource = {.id = jfa_1}})
+        .set_execute([this](vk::CommandBuffer cmd) {
+          cmd.bindPipeline(vk::PipelineBindPoint::eCompute, convert_pipeline_.get());
+          cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, convert_pipeline_layout_.get(), 0, 1,
+                                 &convert_descriptor_sets_.at(current_frame_), 0, nullptr);
+
+          constexpr uint32_t gx = (256 + 7) / 8;
+          constexpr uint32_t gy = (256 + 7) / 8;
+          cmd.dispatch(gx, gy, 1);
+        });
+
+    graph.add_compute_pass()
+        .set_storage_image_write({.resource = {.id = jfa_1}})
+        .set_storage_image_write({.resource = {.id = jfa_2}})
+        .set_execute([this, jfa_1, jfa_2](vk::CommandBuffer cmd) {
+          cmd.bindPipeline(vk::PipelineBindPoint::eCompute, jfa_pipeline_.get());
+
+          auto barrier = vk::ImageMemoryBarrier2{}
+                             .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+                             .setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
+                             .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+                             .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageRead)
+                             .setOldLayout(vk::ImageLayout::eGeneral)
+                             .setNewLayout(vk::ImageLayout::eGeneral)
+                             .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
+                             .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
+                             .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+
+          bool use_jfa_1 = true;
+          constexpr auto k_start = 256u;
+          constexpr auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
+          for (uint32_t i = 1; i <= k_count; i++) {
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1,
+                                   &jfa_descriptor_sets_.at((use_jfa_1 ? 0 : 1) + current_frame_ * 2), 0, nullptr);
+
+            const JFAPushConstant push_constant{.k = k_start >> i, .w = 256, .h = 256};
+
+            cmd.pushConstants(draw_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                              sizeof(JFAPushConstant), &push_constant);
+
+            constexpr uint32_t gx = (256 + 7) / 8;
+            constexpr uint32_t gy = (256 + 7) / 8;
+            cmd.dispatch(gx, gy, 1);
+
+            if (i > 1) {
+              barrier.setImage(use_jfa_1 ? context_.get_raw_image(jfa_1, current_frame_)
+                                         : context_.get_raw_image(jfa_2, current_frame_));
+              cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+            }
+            use_jfa_1 = !use_jfa_1;
+          }
         });
 
     graph.add_compute_pass()
@@ -201,8 +343,49 @@ void Renderer2D::run_frame()
                               {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
 
     graph.compile();
-  }
 
+    // Very ugly descriptor updates...
+    vk::ImageSubresourceRange subresource_range{};
+    subresource_range.setAspectMask(vk::ImageAspectFlagBits::eColor);
+    subresource_range.setBaseMipLevel(0);
+    subresource_range.setBaseArrayLayer(0);
+    subresource_range.setLevelCount(1);
+    subresource_range.setLayerCount(1);
+    const fwrk::ViewKey view_key{subresource_range, VK_IMAGE_VIEW_TYPE_2D};
+
+    DescriptorWriter{}
+        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
+                   vk::ImageLayout::eGeneral)
+        .update(device_.get(), convert_descriptor_sets_.at(0))
+        .clear()
+        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
+                   vk::ImageLayout::eGeneral)
+        .update(device_.get(), convert_descriptor_sets_.at(1))
+        .clear()
+        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
+                   vk::ImageLayout::eGeneral)
+        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
+                   vk::ImageLayout::eGeneral)
+        .update(device_.get(), jfa_descriptor_sets_.at(0))
+        .clear()
+        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
+                   vk::ImageLayout::eGeneral)
+        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
+                   vk::ImageLayout::eGeneral)
+        .update(device_.get(), jfa_descriptor_sets_.at(1))
+        .clear()
+        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
+                   vk::ImageLayout::eGeneral)
+        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
+                   vk::ImageLayout::eGeneral)
+        .update(device_.get(), jfa_descriptor_sets_.at(2))
+        .clear()
+        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
+                   vk::ImageLayout::eGeneral)
+        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
+                   vk::ImageLayout::eGeneral)
+        .update(device_.get(), jfa_descriptor_sets_.at(3));
+  }
 
   context_.update_proxy(swapchain_proxy_, swapchain_imports_[image_index_]);
 
