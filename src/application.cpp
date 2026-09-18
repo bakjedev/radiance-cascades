@@ -8,7 +8,7 @@ struct QuitEvent {};
 
 Application::Application(const uint32_t window_width, const uint32_t window_height) :
     window_(event_dispatcher_, window_width, window_height, "everything.. seems to be in order."),
-    input_(event_dispatcher_), renderer_(window_, resource_manager_, file_system_)
+    input_(event_dispatcher_), renderer_(window_, event_dispatcher_, resource_manager_, file_system_)
 {
 }
 

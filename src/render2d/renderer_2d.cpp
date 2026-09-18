@@ -5,6 +5,7 @@
 
 #include "backend/descriptor.hpp"
 #include "backend/pipeline.hpp"
+#include "src/event_dispatcher.hpp"
 #include "src/resource/resource_manager.hpp"
 #include "src/resource/types/shader_resource.hpp"
 #include "src/window.hpp"
@@ -25,9 +26,12 @@ struct SpecialData {
   uint32_t image_height;
 };
 
-Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource_manager, FileSystem& file_system) :
-    window_(window), resource_manager_(resource_manager), file_system_(file_system),
-    device_(instance_.get(), create_surface(window, instance_)),
+constexpr std::pair image_size{256u, 256u};
+
+Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
+                       ResourceManager<ShaderResource>& resource_manager, FileSystem& file_system) :
+    window_(window), event_dispatcher_(event_dispatcher), resource_manager_(resource_manager),
+    file_system_(file_system), device_(instance_.get(), create_surface(window, instance_)),
     swapchain_(device_, {window.width(), window.height()},
                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst),
     fwrk_allocator_(device_.get_allocator()), context_(device_.get(), frames_in_flight, fwrk_allocator_)
@@ -42,12 +46,17 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
     semaphore = device_.get().createSemaphoreUnique(semaphore_create_info);
   }
 
+  event_dispatcher.listen<WindowResizeEvent>([this](const WindowResizeEvent& event) {
+    swapchain_.recreate({static_cast<uint32_t>(event.width), static_cast<uint32_t>(event.height)});
+    import_resources();
+  });
+
   // ----------------------------------------
   // Images
   // ----------------------------------------
   scene_image_.emplace(device_.get_allocator(),
                        ImageDesc{}
-                           .set_extent(256, 256)
+                           .set_extent(image_size.first, image_size.second)
                            .set_format(vk::Format::eR16G16B16A16Sfloat)
                            .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst |
                                       vk::ImageUsageFlagBits::eTransferSrc));
@@ -126,7 +135,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
   // Pipelines
   // ----------------------------------------
 
-  SpecialData special_data{.image_width = 256, .image_height = 256};
+  SpecialData special_data{.image_width = image_size.first, .image_height = image_size.second};
   std::array<vk::SpecializationMapEntry, 2> entries{{{0, offsetof(SpecialData, image_width), sizeof(uint32_t)},
                                                      {1, offsetof(SpecialData, image_height), sizeof(uint32_t)}}};
   vk::SpecializationInfo specialization_info{};
@@ -204,7 +213,7 @@ Renderer2D::Renderer2D(Window& window, ResourceManager<ShaderResource>& resource
   // Imports
   // ----------------------------------------
   fwrk::ImageImportInfo image_import_info{.type = VK_IMAGE_TYPE_2D,
-                                          .size = {.width = 256, .height = 256, .depth = 1},
+                                          .size = {.width = image_size.first, .height = image_size.second, .depth = 1},
                                           .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                                           .state = fwrk::PhysicalState::Undefined};
   scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
@@ -262,7 +271,7 @@ void Renderer2D::run_frame()
     should_compile_ = false;
 
     fwrk::ImageCreateInfo create_info{.type = VK_IMAGE_TYPE_2D,
-                                      .size = {.width = 256, .height = 256, .depth = 1},
+                                      .size = {.width = image_size.first, .height = image_size.second, .depth = 1},
                                       .format = VK_FORMAT_R32G32_SINT,
                                       .flags = {},
                                       .mips = 1,
@@ -310,8 +319,8 @@ void Renderer2D::run_frame()
           cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, convert_pipeline_layout_.get(), 0, 1,
                                  &convert_descriptor_sets_.at(current_frame_), 0, nullptr);
 
-          constexpr uint32_t gx = (256 + 7) / 8;
-          constexpr uint32_t gy = (256 + 7) / 8;
+          constexpr uint32_t gx = (image_size.first + 7) / 8;
+          constexpr uint32_t gy = (image_size.second + 7) / 8;
           cmd.dispatch(gx, gy, 1);
         });
 
@@ -333,7 +342,7 @@ void Renderer2D::run_frame()
                              .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
 
           bool use_jfa_1 = true;
-          constexpr auto k_start = 256u;
+          constexpr auto k_start = image_size.first;
           constexpr auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
           for (uint32_t i = 1; i <= k_count; i++) {
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1,
@@ -344,8 +353,8 @@ void Renderer2D::run_frame()
             cmd.pushConstants(jfa_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant),
                               &push_constant);
 
-            constexpr uint32_t gx = (256 + 7) / 8;
-            constexpr uint32_t gy = (256 + 7) / 8;
+            constexpr uint32_t gx = (image_size.first + 7) / 8;
+            constexpr uint32_t gy = (image_size.second + 7) / 8;
             cmd.dispatch(gx, gy, 1);
 
             if (i > 1) {
@@ -365,8 +374,8 @@ void Renderer2D::run_frame()
           cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, convert_pipeline_layout_.get(), 0, 1,
                                  &sdf_descriptor_sets_.at(current_frame_), 0, nullptr);
 
-          constexpr uint32_t gx = (256 + 7) / 8;
-          constexpr uint32_t gy = (256 + 7) / 8;
+          constexpr uint32_t gx = (image_size.first + 7) / 8;
+          constexpr uint32_t gy = (image_size.second + 7) / 8;
           cmd.dispatch(gx, gy, 1);
         });
 
@@ -374,20 +383,26 @@ void Renderer2D::run_frame()
         .set_image_transfer_src({.resource = {.id = sdf}})
         .set_image_transfer_dst({.resource = {.id = swapchain_proxy_}})
         .set_execute([this, sdf](vk::CommandBuffer cmd) {
-          const auto img_w = scene_image_->extent().width;
-          const auto img_h = scene_image_->extent().height;
           const auto swp_w = swapchain_.extent().width;
           const auto swp_h = swapchain_.extent().height;
-          const auto sx = static_cast<int32_t>(swp_w) / 2 - static_cast<int32_t>(swp_h) / 2;
+          const float scale = std::min(static_cast<float>(swp_w) / static_cast<float>(image_size.first),
+                                       static_cast<float>(swp_h) / static_cast<float>(image_size.second));
 
-          const vk::ImageBlit blit{{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                                   {{{0, 0, 0}, {static_cast<int32_t>(img_w), static_cast<int32_t>(img_h), 1}}},
-                                   {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                                   {{{sx, 0, 0}, {static_cast<int32_t>(swp_w) - sx, static_cast<int32_t>(swp_h), 1}}}};
+          const auto dst_w = static_cast<int32_t>(image_size.first * scale);
+          const auto dst_h = static_cast<int32_t>(image_size.second * scale);
+
+          const int32_t dst_off_x = (static_cast<int32_t>(swp_w) - dst_w) / 2;
+          const int32_t dst_off_y = (static_cast<int32_t>(swp_h) - dst_h) / 2;
+
+          const vk::ImageBlit blit{
+              {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+              {{{0, 0, 0}, {static_cast<int32_t>(image_size.first), static_cast<int32_t>(image_size.second), 1}}},
+              {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+              {{{dst_off_x, dst_off_y, 0}, {dst_off_x + dst_w, dst_off_y + dst_h, 1}}}};
 
           cmd.blitImage(context_.get_raw_image(sdf), vk::ImageLayout::eTransferSrcOptimal,
                         swapchain_.image(image_index_), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
-                        vk::Filter::eNearest);
+                        vk::Filter::eLinear);
         });
 
     graph.set_image_end_state(swapchain_proxy_,

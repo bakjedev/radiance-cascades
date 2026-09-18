@@ -19,7 +19,8 @@ constexpr uint32_t frames_in_flight = 2;
 
 class Renderer2D {
 public:
-  Renderer2D(Window& window, ResourceManager<ShaderResource>& resource_manager, FileSystem& file_system);
+  Renderer2D(Window& window, EventDispatcher& event_dispatcher, ResourceManager<ShaderResource>& resource_manager,
+             FileSystem& file_system);
   ~Renderer2D();
 
   void render();
@@ -32,6 +33,7 @@ private:
   void end_frame();
 
   Window& window_;
+  EventDispatcher& event_dispatcher_;
   ResourceManager<ShaderResource>& resource_manager_;
   FileSystem& file_system_;
 
