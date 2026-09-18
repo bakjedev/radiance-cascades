@@ -172,6 +172,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     convert_pipeline_layout_ = create_pipeline_layout(device_.get(), {&convert_descriptor_set_layout_.get(), 1}, {});
 
     const ComputePipelineDesc convert_pipeline_desc{.module = convert_shader_module_.get(),
+                                                    .specialization = &specialization_info,
                                                     .layout = convert_pipeline_layout_.get()};
 
     convert_pipeline_ = create_compute_pipeline(device_.get(), convert_pipeline_desc);
@@ -204,6 +205,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     sdf_shader_module_ = create_shader_module(device_.get(), sdf_shader_resource->code);
 
     const ComputePipelineDesc sdf_pipeline_desc{.module = sdf_shader_module_.get(),
+                                                .specialization = &specialization_info,
                                                 .layout = convert_pipeline_layout_.get()};
 
     sdf_pipeline_ = create_compute_pipeline(device_.get(), sdf_pipeline_desc);
