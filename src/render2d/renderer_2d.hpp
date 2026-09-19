@@ -25,7 +25,7 @@ public:
 
   void render();
 
-  void plot(const std::pair<int32_t, int32_t>& pos);
+  void plot(const std::pair<float, float>& pos);
 
 private:
   bool begin_frame();

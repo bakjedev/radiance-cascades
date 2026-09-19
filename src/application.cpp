@@ -34,19 +34,7 @@ void Application::run()
     }
 
     if (input_.mouse_down(MouseButton::Left)) {
-      auto [mouse_x, mouse_y] = std::pair{input_.mouse_x(), input_.mouse_y()};
-
-      const auto w = static_cast<float>(window_.width());
-      const auto h = static_cast<float>(window_.height());
-      const auto sx = static_cast<float>(w) / 2 - static_cast<float>(h) / 2;
-
-      const float u = (mouse_x - sx) / h;
-      const float v = mouse_y / h;
-
-      const auto px = static_cast<int32_t>(std::floor(u * 256)) - 1;
-      const auto py = static_cast<int32_t>(std::floor(v * 256)) - 1;
-
-      renderer_.plot({px, py});
+      renderer_.plot({input_.mouse_x(), input_.mouse_y()});
     }
 
     renderer_.render();

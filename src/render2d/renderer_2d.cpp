@@ -234,10 +234,24 @@ void Renderer2D::render()
     end_frame();
   }
 }
-void Renderer2D::plot(const std::pair<int32_t, int32_t>& pos)
+void Renderer2D::plot(const std::pair<float, float>& pos)
 {
+  const auto swp_w = swapchain_.extent().width;
+  const auto swp_h = swapchain_.extent().height;
+  const float scale = std::min(static_cast<float>(swp_w) / static_cast<float>(image_size.first),
+                               static_cast<float>(swp_h) / static_cast<float>(image_size.second));
+
+  const auto dst_w = static_cast<int32_t>(image_size.first * scale);
+  const auto dst_h = static_cast<int32_t>(image_size.second * scale);
+
+  const int32_t dst_off_x = (static_cast<int32_t>(swp_w) - dst_w) / 2;
+  const int32_t dst_off_y = (static_cast<int32_t>(swp_h) - dst_h) / 2;
+
+  const float x_factor = (pos.first - static_cast<float>(dst_off_x)) / static_cast<float>(dst_w);
+  const float y_factor = (pos.second - static_cast<float>(dst_off_y)) / static_cast<float>(dst_h);
+
   should_draw_ = true;
-  draw_pos_ = pos;
+  draw_pos_ = {x_factor * static_cast<float>(image_size.first), y_factor * static_cast<float>(image_size.second)};
 }
 
 bool Renderer2D::begin_frame()
