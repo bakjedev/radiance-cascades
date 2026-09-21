@@ -12,7 +12,7 @@ layout(push_constant) uniform PushConstant {
 } pushConstants;
 
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(binding = 1) uniform iimage2D storageImagesI[];
+layout(binding = 0) uniform iimage2D storageImagesI[];
 
 ivec2 directions[] = ivec2[](
         ivec2(0, 0),

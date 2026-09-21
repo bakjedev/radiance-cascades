@@ -74,19 +74,15 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // ----------------------------------------
   // Descriptors
   // ----------------------------------------
-  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 300}};
+  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 100}};
   descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 1);
 
   // Bindless
   {
     bindless_descriptor_set_layout_ = create_descriptor_set_layout(
-        device_.get(), DescriptorSetLayoutDesc{}
-                           .add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
-                                        vk::DescriptorBindingFlagBits::ePartiallyBound, 100)
-                           .add_binding(1, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
-                                        vk::DescriptorBindingFlagBits::ePartiallyBound, 100)
-                           .add_binding(2, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
-                                        vk::DescriptorBindingFlagBits::ePartiallyBound, 100));
+        device_.get(),
+        DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
+                                              vk::DescriptorBindingFlagBits::ePartiallyBound, 100));
 
     bindless_descriptor_set_ = device_.get()
                                    .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
@@ -96,7 +92,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   }
 
   DescriptorWriter{}
-      .add_image(2, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
       .update(device_.get(), bindless_descriptor_set_);
 
   // ----------------------------------------
@@ -312,7 +308,7 @@ void Renderer2D::run_frame()
                                  &bindless_descriptor_set_, 0, nullptr);
 
           const ConvertPushConstant push_constant{
-              .jfa_id = current_frame_ * 2,
+              .jfa_id = 1 + current_frame_ * 2,
           };
 
           cmd.pushConstants(convert_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
@@ -347,8 +343,8 @@ void Renderer2D::run_frame()
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1,
                                    &bindless_descriptor_set_, 0, nullptr);
 
-            const JFAPushConstant push_constant{.read_id = (use_jfa_1 ? 0 : 1) + current_frame_ * 2,
-                                                .write_id = (use_jfa_1 ? 1 : 0) + current_frame_ * 2,
+            const JFAPushConstant push_constant{.read_id = (use_jfa_1 ? 1 : 2) + current_frame_ * 2,
+                                                .write_id = (use_jfa_1 ? 2 : 1) + current_frame_ * 2,
                                                 .k = k_start >> i};
 
             cmd.pushConstants(jfa_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant),
@@ -376,8 +372,8 @@ void Renderer2D::run_frame()
                                  &bindless_descriptor_set_, 0, nullptr);
 
           const SDFPushConstant push_constant{
-              .jfa_id = current_frame_ * 2,
-              .sdf_id = current_frame_,
+              .jfa_id = (1 + current_frame_) * 2,
+              .sdf_id = 5 + current_frame_,
           };
 
           cmd.pushConstants(sdf_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant),
@@ -429,17 +425,17 @@ void Renderer2D::run_frame()
     const fwrk::ViewKey view_key{subresource_range, VK_IMAGE_VIEW_TYPE_2D};
 
     DescriptorWriter{}
-        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
+        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
                    vk::ImageLayout::eGeneral)
-        .add_image(1, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
+        .add_image(0, 2, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
                    vk::ImageLayout::eGeneral)
-        .add_image(1, 2, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
+        .add_image(0, 3, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
                    vk::ImageLayout::eGeneral)
-        .add_image(1, 3, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
+        .add_image(0, 4, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
                    vk::ImageLayout::eGeneral)
-        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 0),
+        .add_image(0, 5, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 0),
                    vk::ImageLayout::eGeneral)
-        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 1),
+        .add_image(0, 6, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 1),
                    vk::ImageLayout::eGeneral)
         .update(device_.get(), bindless_descriptor_set_);
   }
