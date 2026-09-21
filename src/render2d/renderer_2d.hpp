@@ -55,18 +55,13 @@ private:
   vk::UniqueShaderModule jfa_shader_module_;
   vk::UniquePipeline jfa_pipeline_;
 
+  vk::UniquePipelineLayout sdf_pipeline_layout_;
   vk::UniqueShaderModule sdf_shader_module_;
   vk::UniquePipeline sdf_pipeline_;
 
   vk::UniqueDescriptorPool descriptor_pool_;
   vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;
   vk::DescriptorSet bindless_descriptor_set_;
-
-  vk::UniqueDescriptorSetLayout convert_descriptor_set_layout_;
-  std::array<vk::DescriptorSet, 2> convert_descriptor_sets_;
-  vk::UniqueDescriptorSetLayout jfa_descriptor_set_layout_;
-  std::array<vk::DescriptorSet, 4> jfa_descriptor_sets_;
-  std::array<vk::DescriptorSet, 2> sdf_descriptor_sets_;
 
   std::optional<Image> scene_image_;
   vk::UniqueImageView scene_image_view_;

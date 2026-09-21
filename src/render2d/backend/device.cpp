@@ -46,7 +46,9 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
     return false;
   }
 
-  if (!features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingPartiallyBound) {
+  if (!features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingPartiallyBound ||
+      !features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().shaderStorageImageArrayNonUniformIndexing ||
+      !features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().runtimeDescriptorArray) {
     return false;
   }
 
@@ -111,6 +113,9 @@ void Device::create_device()
   feature_chain.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = vk::True;
   feature_chain.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = vk::True;
   feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingPartiallyBound = vk::True;
+  feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().runtimeDescriptorArray = vk::True;
+  feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().shaderStorageImageArrayNonUniformIndexing =
+      vk::True;
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageReadWithoutFormat = vk::True;
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat = vk::True;
 

@@ -18,7 +18,18 @@ struct DrawPushConstant {
 };
 
 struct JFAPushConstant {
+  uint32_t read_id;
+  uint32_t write_id;
   uint32_t k;
+};
+
+struct ConvertPushConstant {
+  uint32_t jfa_id;
+};
+
+struct SDFPushConstant {
+  uint32_t jfa_id;
+  uint32_t sdf_id;
 };
 
 struct SpecialData {
@@ -65,8 +76,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // ----------------------------------------
   // Descriptors
   // ----------------------------------------
-  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 116}};
-  descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 11);
+  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 100}};
+  descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 1);
 
   // Bindless
   {
@@ -81,53 +92,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                                .setSetLayouts(*bindless_descriptor_set_layout_))
                                    .front();
   }
-
-  // Convert
-  {
-    convert_descriptor_set_layout_ = create_descriptor_set_layout(
-        device_.get(), DescriptorSetLayoutDesc{}
-                           .add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute)
-                           .add_binding(1, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute));
-
-    for (auto& convert_descriptor_set: convert_descriptor_sets_) {
-      convert_descriptor_set = device_.get()
-                                   .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
-                                                               .setDescriptorPool(*descriptor_pool_)
-                                                               .setSetLayouts(*convert_descriptor_set_layout_))
-                                   .front();
-    }
-  }
-
-  // JFA
-  {
-    jfa_descriptor_set_layout_ = create_descriptor_set_layout(
-        device_.get(), DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage,
-                                                             vk::ShaderStageFlagBits::eCompute, {}, 2));
-
-    for (auto& jfa_descriptor_set: jfa_descriptor_sets_) {
-      jfa_descriptor_set = device_.get()
-                               .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
-                                                           .setDescriptorPool(*descriptor_pool_)
-                                                           .setSetLayouts(*jfa_descriptor_set_layout_))
-                               .front();
-    }
-  }
-
-  // SDF
-  {
-    for (auto& sdf_descriptor_set: sdf_descriptor_sets_) {
-      sdf_descriptor_set = device_.get()
-                               .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
-                                                           .setDescriptorPool(*descriptor_pool_)
-                                                           .setSetLayouts(*convert_descriptor_set_layout_))
-                               .front();
-    }
-  }
-
-  DescriptorWriter{}
-      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
-      .update(device_.get(), convert_descriptor_sets_.at(0))
-      .update(device_.get(), convert_descriptor_sets_.at(1));
 
   DescriptorWriter{}
       .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
@@ -166,12 +130,15 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
 
   // Convert pipeline
   {
+    vk::PushConstantRange convert_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(ConvertPushConstant)};
+
     auto convert_shader_resource =
         resource_manager_.create_from_file<ShaderResource>("convert.comp.spv", ShaderResourceLoader{&file_system_});
 
     convert_shader_module_ = create_shader_module(device_.get(), convert_shader_resource->code);
 
-    convert_pipeline_layout_ = create_pipeline_layout(device_.get(), {&convert_descriptor_set_layout_.get(), 1}, {});
+    convert_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&convert_push, 1});
 
     const ComputePipelineDesc convert_pipeline_desc{.module = convert_shader_module_.get(),
                                                     .specialization = &specialization_info,
@@ -190,7 +157,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     jfa_shader_module_ = create_shader_module(device_.get(), jfa_shader_resource->code);
 
     jfa_pipeline_layout_ =
-        create_pipeline_layout(device_.get(), {&jfa_descriptor_set_layout_.get(), 1}, {&jfa_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&jfa_push, 1});
 
     const ComputePipelineDesc jfa_pipeline_desc{.module = jfa_shader_module_.get(),
                                                 .specialization = &specialization_info,
@@ -201,14 +168,19 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
 
   // SDF pipeline
   {
+    vk::PushConstantRange sdf_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant)};
+
     auto sdf_shader_resource =
         resource_manager_.create_from_file<ShaderResource>("sdf.comp.spv", ShaderResourceLoader{&file_system_});
 
     sdf_shader_module_ = create_shader_module(device_.get(), sdf_shader_resource->code);
 
+    sdf_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&sdf_push, 1});
+
     const ComputePipelineDesc sdf_pipeline_desc{.module = sdf_shader_module_.get(),
                                                 .specialization = &specialization_info,
-                                                .layout = convert_pipeline_layout_.get()};
+                                                .layout = sdf_pipeline_layout_.get()};
 
     sdf_pipeline_ = create_compute_pipeline(device_.get(), sdf_pipeline_desc);
   }
@@ -335,7 +307,14 @@ void Renderer2D::run_frame()
         .set_execute([this](vk::CommandBuffer cmd) {
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, convert_pipeline_.get());
           cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, convert_pipeline_layout_.get(), 0, 1,
-                                 &convert_descriptor_sets_.at(current_frame_), 0, nullptr);
+                                 &bindless_descriptor_set_, 0, nullptr);
+
+          const ConvertPushConstant push_constant{
+              .jfa_id = 1 + current_frame_ * 2,
+          };
+
+          cmd.pushConstants(convert_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                            sizeof(ConvertPushConstant), &push_constant);
 
           constexpr uint32_t gx = (image_size.first + 7) / 8;
           constexpr uint32_t gy = (image_size.second + 7) / 8;
@@ -364,9 +343,11 @@ void Renderer2D::run_frame()
           constexpr auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
           for (uint32_t i = 1; i <= k_count; i++) {
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1,
-                                   &jfa_descriptor_sets_.at((use_jfa_1 ? 0 : 1) + current_frame_ * 2), 0, nullptr);
+                                   &bindless_descriptor_set_, 0, nullptr);
 
-            const JFAPushConstant push_constant{.k = k_start >> i};
+            const JFAPushConstant push_constant{.read_id = (use_jfa_1 ? 1 : 2) + current_frame_ * 2,
+                                                .write_id = (use_jfa_1 ? 2 : 1) + current_frame_ * 2,
+                                                .k = k_start >> i};
 
             cmd.pushConstants(jfa_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant),
                               &push_constant);
@@ -389,8 +370,16 @@ void Renderer2D::run_frame()
         .set_storage_image_write({.resource = {.id = sdf}})
         .set_execute([this](vk::CommandBuffer cmd) {
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, sdf_pipeline_.get());
-          cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, convert_pipeline_layout_.get(), 0, 1,
-                                 &sdf_descriptor_sets_.at(current_frame_), 0, nullptr);
+          cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, sdf_pipeline_layout_.get(), 0, 1,
+                                 &bindless_descriptor_set_, 0, nullptr);
+
+          const SDFPushConstant push_constant{
+              .jfa_id = (1 + current_frame_) * 2,
+              .sdf_id = 5 + current_frame_,
+          };
+
+          cmd.pushConstants(sdf_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant),
+                            &push_constant);
 
           constexpr uint32_t gx = (image_size.first + 7) / 8;
           constexpr uint32_t gy = (image_size.second + 7) / 8;
@@ -437,52 +426,20 @@ void Renderer2D::run_frame()
     subresource_range.setLayerCount(1);
     const fwrk::ViewKey view_key{subresource_range, VK_IMAGE_VIEW_TYPE_2D};
 
-    DescriptorWriter{} // jfa1 both FIF
-        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
-                   vk::ImageLayout::eGeneral)
-        .update(device_.get(), convert_descriptor_sets_.at(0))
-        .clear()
-        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
-                   vk::ImageLayout::eGeneral)
-        .update(device_.get(), convert_descriptor_sets_.at(1))
-        .clear()
-        // jfa 1 and 2 for both FIF
-        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
-                   vk::ImageLayout::eGeneral)
-        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
-                   vk::ImageLayout::eGeneral)
-        .update(device_.get(), jfa_descriptor_sets_.at(0))
-        .clear()
-        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
-                   vk::ImageLayout::eGeneral)
+    DescriptorWriter{}
         .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
                    vk::ImageLayout::eGeneral)
-        .update(device_.get(), jfa_descriptor_sets_.at(1))
-        .clear()
-        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
+        .add_image(0, 2, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
                    vk::ImageLayout::eGeneral)
-        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
+        .add_image(0, 3, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
                    vk::ImageLayout::eGeneral)
-        .update(device_.get(), jfa_descriptor_sets_.at(2))
-        .clear()
-        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
+        .add_image(0, 4, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
                    vk::ImageLayout::eGeneral)
-        .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
+        .add_image(0, 5, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 0),
                    vk::ImageLayout::eGeneral)
-        .update(device_.get(), jfa_descriptor_sets_.at(3))
-        .clear()
-        // sdf for both FIF
-        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
+        .add_image(0, 6, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 1),
                    vk::ImageLayout::eGeneral)
-        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 0),
-                   vk::ImageLayout::eGeneral)
-        .update(device_.get(), sdf_descriptor_sets_.at(0))
-        .clear()
-        .add_image(0, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
-                   vk::ImageLayout::eGeneral)
-        .add_image(1, 0, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 1),
-                   vk::ImageLayout::eGeneral)
-        .update(device_.get(), sdf_descriptor_sets_.at(1));
+        .update(device_.get(), bindless_descriptor_set_);
   }
 
   context_.update_proxy(swapchain_proxy_, swapchain_imports_[image_index_]);

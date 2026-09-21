@@ -1,21 +1,26 @@
 #version 450
+#extension GL_EXT_shader_image_load_formatted : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout(constant_id = 0) const uint img_width = 0;
 layout(constant_id = 1) const uint img_height = 0;
 
+layout(push_constant) uniform PushConstant {
+    uint jfa_id;
+} pushConstants;
+
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(binding = 0, rgba16f) uniform image2D img;
-layout(binding = 1, rg32i) uniform iimage2D jfa_img;
+layout(binding = 0) uniform image2D storageImages[];
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(local, ivec2(img_width, img_height)))) return;
 
-    vec4 drawn = imageLoad(img, local);
+    vec4 drawn = imageLoad(storageImages[0], local);
 
     if (any(greaterThan(drawn, vec4(0.0)))) {
-        imageStore(jfa_img, local, ivec4(local, 0, 0));
+        imageStore(storageImages[pushConstants.jfa_id], local, ivec4(local, 0, 0));
         return;
     }
-    imageStore(jfa_img, local, ivec4(-1, -1, 0, 0));
+    imageStore(storageImages[pushConstants.jfa_id], local, ivec4(-1, -1, 0, 0));
 }
