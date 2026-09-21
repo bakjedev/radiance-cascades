@@ -1,4 +1,5 @@
 #pragma once
+#include "backend/buffer.hpp"
 #include "backend/device.hpp"
 #include "backend/frame.hpp"
 #include "backend/image.hpp"
@@ -65,6 +66,8 @@ private:
 
   std::optional<Image> scene_image_;
   vk::UniqueImageView scene_image_view_;
+
+  std::optional<Buffer> material_buffer_;
 
   uint32_t current_frame_{};
   uint32_t image_index_{};

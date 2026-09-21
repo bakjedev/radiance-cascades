@@ -10,32 +10,39 @@
 #include "src/resource/types/shader_resource.hpp"
 #include "src/window.hpp"
 
-struct DrawPushConstant {
-  int32_t x;
-  int32_t y;
-  int32_t w;
-  int32_t h;
-};
+namespace {
+  struct DrawPushConstant {
+    int32_t x;
+    int32_t y;
+    int32_t w;
+    int32_t h;
+  };
 
-struct JFAPushConstant {
-  uint32_t read_id;
-  uint32_t write_id;
-  uint32_t k;
-};
+  struct JFAPushConstant {
+    uint32_t read_id;
+    uint32_t write_id;
+    uint32_t k;
+  };
 
-struct ConvertPushConstant {
-  uint32_t jfa_id;
-};
+  struct ConvertPushConstant {
+    uint32_t jfa_id;
+  };
 
-struct SDFPushConstant {
-  uint32_t jfa_id;
-  uint32_t sdf_id;
-};
+  struct SDFPushConstant {
+    uint32_t jfa_id;
+    uint32_t sdf_id;
+  };
 
-struct SpecialData {
-  uint32_t image_width;
-  uint32_t image_height;
-};
+  struct SpecialData {
+    uint32_t image_width;
+    uint32_t image_height;
+  };
+
+  struct Material {
+    float color[3];
+    float radiance;
+  };
+} // namespace
 
 constexpr std::pair image_size{256u, 256u};
 
@@ -63,7 +70,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   });
 
   // ----------------------------------------
-  // Images
+  // Images and Buffers
   // ----------------------------------------
   scene_image_.emplace(device_.get_allocator(), ImageDesc{}
                                                     .set_extent(image_size.first, image_size.second)
@@ -71,18 +78,32 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                     .set_usage(vk::ImageUsageFlagBits::eStorage));
   scene_image_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
 
+  material_buffer_.emplace(device_.get_allocator(),
+                           BufferDesc{.alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}
+                               .set_size(sizeof(Material) * 256)
+                               .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
+
+  std::vector materials = {Material{.color = {1.0f, 0.97f, 0.63f}, .radiance = 1.0}};
+  void* material_data;
+  vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
+  memcpy(material_data, materials.data(), sizeof(Material) * materials.size());
+  vmaUnmapMemory(device_.get_allocator(), material_buffer_->allocation());
+
   // ----------------------------------------
   // Descriptors
   // ----------------------------------------
-  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 100}};
+  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 100},
+                   vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 100}};
   descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 1);
 
   // Bindless
   {
     bindless_descriptor_set_layout_ = create_descriptor_set_layout(
-        device_.get(),
-        DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
-                                              vk::DescriptorBindingFlagBits::ePartiallyBound, 100));
+        device_.get(), DescriptorSetLayoutDesc{}
+                           .add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
+                                        vk::DescriptorBindingFlagBits::ePartiallyBound, 100)
+                           .add_binding(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
+                                        vk::DescriptorBindingFlagBits::ePartiallyBound, 100));
 
     bindless_descriptor_set_ = device_.get()
                                    .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
@@ -93,6 +114,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
 
   DescriptorWriter{}
       .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
+      .add_buffer(1, 0, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
       .update(device_.get(), bindless_descriptor_set_);
 
   // ----------------------------------------
@@ -366,6 +388,7 @@ void Renderer2D::run_frame()
     graph.add_compute_pass()
         .set_storage_image_read({.resource = {.id = jfa_2}})
         .set_storage_image_write({.resource = {.id = sdf}})
+        .set_storage_image_read({.resource = {.id = scene_image_import_}})
         .set_execute([this](vk::CommandBuffer cmd) {
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, sdf_pipeline_.get());
           cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, sdf_pipeline_layout_.get(), 0, 1,
