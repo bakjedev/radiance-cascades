@@ -4,12 +4,21 @@
 
 struct DescriptorSetLayoutDesc {
   std::vector<vk::DescriptorSetLayoutBinding> bindings;
-  vk::DescriptorSetLayoutCreateFlags flags{};
+  std::vector<vk::DescriptorBindingFlags> binding_flags;
+  vk::DescriptorSetLayoutCreateFlags layout_flags{};
 
   DescriptorSetLayoutDesc& add_binding(const uint32_t binding, const vk::DescriptorType type,
-                                       const vk::ShaderStageFlags stages, const uint32_t count = 1)
+                                       const vk::ShaderStageFlags stages, const vk::DescriptorBindingFlags flags = {},
+                                       const uint32_t count = 1)
   {
     bindings.emplace_back(binding, type, count, stages, nullptr);
+    binding_flags.emplace_back(flags);
+    return *this;
+  }
+
+  DescriptorSetLayoutDesc& set_layout_flags(const vk::DescriptorSetLayoutCreateFlags flags)
+  {
+    layout_flags = flags;
     return *this;
   }
 };
@@ -17,8 +26,13 @@ struct DescriptorSetLayoutDesc {
 inline vk::UniqueDescriptorSetLayout create_descriptor_set_layout(vk::Device device,
                                                                   const DescriptorSetLayoutDesc& desc)
 {
-  return device.createDescriptorSetLayoutUnique(
-      vk::DescriptorSetLayoutCreateInfo{}.setFlags(desc.flags).setBindings(desc.bindings));
+  vk::DescriptorSetLayoutBindingFlagsCreateInfo binding_flags_create_info{};
+  binding_flags_create_info.setBindingFlags(desc.binding_flags);
+
+  return device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}
+                                                    .setFlags(desc.layout_flags)
+                                                    .setBindings(desc.bindings)
+                                                    .setPNext(&binding_flags_create_info));
 }
 
 inline vk::UniqueDescriptorPool create_descriptor_pool(vk::Device device, std::span<const vk::DescriptorPoolSize> sizes,
