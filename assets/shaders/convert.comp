@@ -10,17 +10,18 @@ layout(push_constant) uniform PushConstant {
 } pushConstants;
 
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(binding = 0) uniform image2D storageImages[];
+layout(binding = 1) uniform iimage2D storageImagesI[];
+layout(binding = 2) uniform uimage2D storageImagesU[];
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(local, ivec2(img_width, img_height)))) return;
 
-    vec4 drawn = imageLoad(storageImages[0], local);
+    uint drawn = imageLoad(storageImagesU[0], local).x;
 
-    if (any(greaterThan(drawn, vec4(0.0)))) {
-        imageStore(storageImages[pushConstants.jfa_id], local, ivec4(local, 0, 0));
+    if (drawn >= 1) {
+        imageStore(storageImagesI[pushConstants.jfa_id], local, ivec4(local, 0, 0));
         return;
     }
-    imageStore(storageImages[pushConstants.jfa_id], local, ivec4(-1, -1, 0, 0));
+    imageStore(storageImagesI[pushConstants.jfa_id], local, ivec4(-1, -1, 0, 0));
 }

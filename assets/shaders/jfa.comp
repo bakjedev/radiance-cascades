@@ -12,7 +12,7 @@ layout(push_constant) uniform PushConstant {
 } pushConstants;
 
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(binding = 0) uniform image2D storageImages[];
+layout(binding = 1) uniform iimage2D storageImagesI[];
 
 ivec2 directions[] = ivec2[](
         ivec2(0, 0),
@@ -36,7 +36,7 @@ void main() {
         ivec2 dir = directions[i] * ivec2(pushConstants.k);
         ivec2 coord = local + dir;
         if (any(greaterThanEqual(coord, ivec2(img_width, img_height))) || any(lessThan(coord, ivec2(0)))) continue;
-        ivec2 offset_point = ivec2(imageLoad(storageImages[pushConstants.read_id], coord).xy);
+        ivec2 offset_point = ivec2(imageLoad(storageImagesI[pushConstants.read_id], coord).xy);
         if (offset_point.x < 0) continue;
         ivec2 d = offset_point - local;
         int dist2 = d.x * d.x + d.y * d.y;
@@ -46,5 +46,5 @@ void main() {
         }
     }
 
-    imageStore(storageImages[pushConstants.write_id], local, ivec4(closest_seed, 0.0, 0.0));
+    imageStore(storageImagesI[pushConstants.write_id], local, ivec4(closest_seed, 0.0, 0.0));
 }

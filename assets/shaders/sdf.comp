@@ -11,13 +11,14 @@ layout(push_constant) uniform PushConstant {
 } pushConstants;
 
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(binding = 0) uniform image2D storageImages[];
+layout(binding = 0) uniform image2D storageImagesF[];
+layout(binding = 1) uniform iimage2D storageImagesI[];
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(local, ivec2(img_width, img_height)))) return;
-    ivec2 seed = ivec2(imageLoad(storageImages[pushConstants.jfa_id], local).xy);
+    ivec2 seed = ivec2(imageLoad(storageImagesI[pushConstants.jfa_id], local).xy);
     float dist = distance(vec2(local), vec2(seed));
     float t = dist / 100.0;
-    imageStore(storageImages[pushConstants.sdf_id], local, vec4(t, 0.0, 0.0, 1.0));
+    imageStore(storageImagesF[pushConstants.sdf_id], local, vec4(t, 0.0, 0.0, 1.0));
 }
