@@ -16,6 +16,7 @@ namespace {
     int32_t y;
     int32_t w;
     int32_t h;
+    uint8_t material_id;
   };
 
   struct JFAPushConstant {
@@ -83,7 +84,9 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                .set_size(sizeof(Material) * 256)
                                .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
 
-  std::vector materials = {Material{.color = {1.0f, 0.97f, 0.63f}, .radiance = 1.0}};
+  // 252, 212, 111
+  std::vector materials = {Material{}, Material{.color = {0.8f, 0.8f, 0.1f}, .radiance = 1.0f},
+                           Material{.color = {0.1f, 0.8f, 0.5f}, .radiance = 1.0f}};
   void* material_data;
   vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
   memcpy(material_data, materials.data(), sizeof(Material) * materials.size());
@@ -228,7 +231,7 @@ void Renderer2D::render()
     end_frame();
   }
 }
-void Renderer2D::plot(const std::pair<float, float>& pos)
+void Renderer2D::plot(const std::pair<float, float>& pos, const uint8_t material)
 {
   const auto swp_w = swapchain_.extent().width;
   const auto swp_h = swapchain_.extent().height;
@@ -244,7 +247,7 @@ void Renderer2D::plot(const std::pair<float, float>& pos)
   const float x_factor = (pos.first - static_cast<float>(dst_off_x)) / static_cast<float>(dst_w);
   const float y_factor = (pos.second - static_cast<float>(dst_off_y)) / static_cast<float>(dst_h);
 
-  should_draw_ = true;
+  draw_material_ = material;
   draw_pos_ = {x_factor * static_cast<float>(image_size.first), y_factor * static_cast<float>(image_size.second)};
 }
 
@@ -299,19 +302,14 @@ void Renderer2D::run_frame()
         .set_storage_image_write({.resource = {.id = scene_image_import_}})
         .set_storage_image_write({.resource = {.id = jfa_1}})
         .set_execute([this](vk::CommandBuffer cmd) {
-          if (!should_draw_) return;
-          should_draw_ = false;
+          if (draw_material_ == 0) return;
 
           cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, draw_pipeline_layout_.get(), 0, 1,
                                  &bindless_descriptor_set_, 0, nullptr);
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
           const DrawPushConstant push_constant{
-              .x = draw_pos_.first,
-              .y = draw_pos_.second,
-              .w = 3,
-              .h = 3,
-          };
+              .x = draw_pos_.first, .y = draw_pos_.second, .w = 3, .h = 3, .material_id = draw_material_};
 
           cmd.pushConstants(draw_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant),
                             &push_constant);
@@ -319,6 +317,8 @@ void Renderer2D::run_frame()
           constexpr uint32_t gx = (3 + 7) / 8;
           constexpr uint32_t gy = (3 + 7) / 8;
           cmd.dispatch(gx, gy, 1);
+
+          draw_material_ = 0;
         });
 
     graph.add_compute_pass()

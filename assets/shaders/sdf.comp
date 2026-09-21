@@ -29,7 +29,7 @@ void main() {
     float dist = distance(vec2(local), vec2(seed));
     float t = pow(clamp(1.0 - dist / 100.0, 0.0, 1.0), 2);
 
-    uint drawn = imageLoad(storageImagesU[0], local).x;
+    uint drawn = imageLoad(storageImagesU[0], seed).x;
     Material material = storageBuffers[0].materials[drawn];
 
     imageStore(storageImagesF[pushConstants.sdf_id], local, vec4(material.color * material.radiance * t, 1.0));

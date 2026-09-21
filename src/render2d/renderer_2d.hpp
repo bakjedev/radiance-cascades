@@ -26,7 +26,7 @@ public:
 
   void render();
 
-  void plot(const std::pair<float, float>& pos);
+  void plot(const std::pair<float, float>& pos, uint8_t material);
 
 private:
   bool begin_frame();
@@ -79,7 +79,7 @@ private:
   fwrk::ResourceID scene_image_import_;
   bool should_compile_ = true;
 
-  bool should_draw_ = false;
+  uint8_t draw_material_ = 0;
   std::pair<int32_t, int32_t> draw_pos_;
 
   void import_resources();

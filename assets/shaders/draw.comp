@@ -1,5 +1,6 @@
 #version 450
 #extension GL_EXT_shader_image_load_formatted : require
+#extension GL_EXT_shader_8bit_storage : require
 
 layout(constant_id = 0) const uint img_width = 0;
 layout(constant_id = 1) const uint img_height = 0;
@@ -7,6 +8,7 @@ layout(constant_id = 1) const uint img_height = 0;
 layout(push_constant) uniform PushConstant {
     ivec2 pos;
     ivec2 size;
+    uint8_t material_id;
 } pushConstants;
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -17,5 +19,5 @@ void main() {
     if (any(greaterThanEqual(local, pushConstants.size))) return;
     ivec2 coord = local + pushConstants.pos;
     if (any(greaterThanEqual(coord, ivec2(img_width, img_height))) || any(lessThan(coord, ivec2(0)))) return;
-    imageStore(storageImagesU[0], coord, ivec4(1));
+    imageStore(storageImagesU[0], coord, ivec4(pushConstants.material_id));
 }

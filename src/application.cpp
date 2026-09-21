@@ -34,7 +34,9 @@ void Application::run()
     }
 
     if (input_.mouse_down(MouseButton::Left)) {
-      renderer_.plot({input_.mouse_x(), input_.mouse_y()});
+      renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 1);
+    } else if (input_.mouse_down(MouseButton::Right)) {
+      renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 2);
     }
 
     renderer_.render();
