@@ -65,20 +65,21 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // ----------------------------------------
   // Descriptors
   // ----------------------------------------
-  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 16}};
-  descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 10);
+  std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 116}};
+  descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 11);
 
-  // Draw
+  // Bindless
   {
-    draw_descriptor_set_layout_ = create_descriptor_set_layout(
+    bindless_descriptor_set_layout_ = create_descriptor_set_layout(
         device_.get(),
-        DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute));
+        DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
+                                              vk::DescriptorBindingFlagBits::ePartiallyBound, 100));
 
-    draw_descriptor_set_ = device_.get()
-                               .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
-                                                           .setDescriptorPool(*descriptor_pool_)
-                                                           .setSetLayouts(*draw_descriptor_set_layout_))
-                               .front();
+    bindless_descriptor_set_ = device_.get()
+                                   .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
+                                                               .setDescriptorPool(*descriptor_pool_)
+                                                               .setSetLayouts(*bindless_descriptor_set_layout_))
+                                   .front();
   }
 
   // Convert
@@ -101,7 +102,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     jfa_descriptor_set_layout_ = create_descriptor_set_layout(
         device_.get(), DescriptorSetLayoutDesc{}.add_binding(0, vk::DescriptorType::eStorageImage,
-                                                             vk::ShaderStageFlagBits::eCompute, 2));
+                                                             vk::ShaderStageFlagBits::eCompute, {}, 2));
 
     for (auto& jfa_descriptor_set: jfa_descriptor_sets_) {
       jfa_descriptor_set = device_.get()
@@ -125,11 +126,12 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
 
   DescriptorWriter{}
       .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
-      .update(device_.get(), draw_descriptor_set_)
-      .clear()
-      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
       .update(device_.get(), convert_descriptor_sets_.at(0))
       .update(device_.get(), convert_descriptor_sets_.at(1));
+
+  DescriptorWriter{}
+      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
+      .update(device_.get(), bindless_descriptor_set_);
 
   // ----------------------------------------
   // Pipelines
@@ -153,7 +155,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     draw_shader_module_ = create_shader_module(device_.get(), draw_shader_resource->code);
 
     draw_pipeline_layout_ =
-        create_pipeline_layout(device_.get(), {&draw_descriptor_set_layout_.get(), 1}, {&draw_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&draw_push, 1});
 
     const ComputePipelineDesc draw_pipeline_desc{.module = draw_shader_module_.get(),
                                                  .specialization = &specialization_info,
@@ -309,7 +311,7 @@ void Renderer2D::run_frame()
           should_draw_ = false;
 
           cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, draw_pipeline_layout_.get(), 0, 1,
-                                 &draw_descriptor_set_, 0, nullptr);
+                                 &bindless_descriptor_set_, 0, nullptr);
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
           const DrawPushConstant push_constant{
