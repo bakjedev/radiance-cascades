@@ -12,10 +12,9 @@
 
 namespace {
   struct DrawPushConstant {
-    int32_t x;
-    int32_t y;
-    int32_t w;
-    int32_t h;
+    uint32_t x;
+    uint32_t y;
+    uint32_t s;
     uint8_t material_id;
   };
 
@@ -34,6 +33,18 @@ namespace {
     uint32_t sdf_id;
   };
 
+  struct CascadesPushConstant {
+    uint32_t sdf_id;
+    uint32_t cascades_id;
+    uint32_t cascade_width;
+    uint32_t cascade_height;
+    uint32_t cascade;
+    uint32_t base_probe_size;
+    float base_spacing;
+    uint32_t base_probe_dir_count;
+    float base_length;
+  };
+
   struct SpecialData {
     uint32_t image_width;
     uint32_t image_height;
@@ -44,8 +55,6 @@ namespace {
     float radiance;
   };
 } // namespace
-
-constexpr std::pair image_size{256u, 256u};
 
 Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                        ResourceManager<ShaderResource>& resource_manager, FileSystem& file_system) :
@@ -74,7 +83,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // Images and Buffers
   // ----------------------------------------
   scene_image_.emplace(device_.get_allocator(), ImageDesc{}
-                                                    .set_extent(image_size.first, image_size.second)
+                                                    .set_extent(config_.scene_size.width, config_.scene_size.height)
                                                     .set_format(vk::Format::eR8Uint)
                                                     .set_usage(vk::ImageUsageFlagBits::eStorage));
   scene_image_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
@@ -84,7 +93,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                .set_size(sizeof(Material) * 256)
                                .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
 
-  // 252, 212, 111
   std::vector materials = {Material{}, Material{.color = {0.8f, 0.8f, 0.1f}, .radiance = 1.0f},
                            Material{.color = {0.1f, 0.8f, 0.5f}, .radiance = 1.0f}};
   void* material_data;
@@ -124,13 +132,12 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // Pipelines
   // ----------------------------------------
 
-  SpecialData special_data{.image_width = image_size.first, .image_height = image_size.second};
+  SpecialData special_data{.image_width = config_.scene_size.width, .image_height = config_.scene_size.height};
   std::array<vk::SpecializationMapEntry, 2> entries{{{0, offsetof(SpecialData, image_width), sizeof(uint32_t)},
                                                      {1, offsetof(SpecialData, image_height), sizeof(uint32_t)}}};
   vk::SpecializationInfo specialization_info{};
   specialization_info.setMapEntries(entries);
   specialization_info.setData<SpecialData>(special_data);
-
 
   // Draw pipeline
   {
@@ -208,13 +215,33 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     sdf_pipeline_ = create_compute_pipeline(device_.get(), sdf_pipeline_desc);
   }
 
+  // Cascades pipeline
+  {
+    vk::PushConstantRange cascades_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CascadesPushConstant)};
+
+    auto cascades_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("cascades.comp.spv", ShaderResourceLoader{&file_system_});
+
+    cascades_shader_module_ = create_shader_module(device_.get(), cascades_shader_resource->code);
+
+    cascades_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&cascades_push, 1});
+
+    const ComputePipelineDesc cascades_pipeline_desc{.module = cascades_shader_module_.get(),
+                                                     .specialization = &specialization_info,
+                                                     .layout = cascades_pipeline_layout_.get()};
+
+    cascades_pipeline_ = create_compute_pipeline(device_.get(), cascades_pipeline_desc);
+  }
+
   // ----------------------------------------
   // Imports
   // ----------------------------------------
-  fwrk::ImageImportInfo image_import_info{.type = VK_IMAGE_TYPE_2D,
-                                          .size = {.width = image_size.first, .height = image_size.second, .depth = 1},
-                                          .format = VK_FORMAT_R8_UINT,
-                                          .state = fwrk::PhysicalState::Undefined};
+  fwrk::ImageImportInfo image_import_info{
+      .type = VK_IMAGE_TYPE_2D,
+      .size = {.width = config_.scene_size.width, .height = config_.scene_size.height, .depth = 1},
+      .format = VK_FORMAT_R8_UINT,
+      .state = fwrk::PhysicalState::Undefined};
   scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
   image_import_info.format = VK_FORMAT_R32G32_SINT;
 
@@ -235,20 +262,22 @@ void Renderer2D::plot(const std::pair<float, float>& pos, const uint8_t material
 {
   const auto swp_w = swapchain_.extent().width;
   const auto swp_h = swapchain_.extent().height;
-  const float scale = std::min(static_cast<float>(swp_w) / static_cast<float>(image_size.first),
-                               static_cast<float>(swp_h) / static_cast<float>(image_size.second));
+  const auto img_w = static_cast<float>(config_.scene_size.width);
+  const auto img_h = static_cast<float>(config_.scene_size.height);
 
-  const auto dst_w = static_cast<int32_t>(image_size.first * scale);
-  const auto dst_h = static_cast<int32_t>(image_size.second * scale);
+  const float scale = std::min(static_cast<float>(swp_w) / img_w, static_cast<float>(swp_h) / img_h);
 
-  const int32_t dst_off_x = (static_cast<int32_t>(swp_w) - dst_w) / 2;
-  const int32_t dst_off_y = (static_cast<int32_t>(swp_h) - dst_h) / 2;
+  const auto dst_w = static_cast<uint32_t>(img_w * scale);
+  const auto dst_h = static_cast<uint32_t>(img_h * scale);
+
+  const uint32_t dst_off_x = (static_cast<uint32_t>(swp_w) - dst_w) / 2;
+  const uint32_t dst_off_y = (static_cast<uint32_t>(swp_h) - dst_h) / 2;
 
   const float x_factor = (pos.first - static_cast<float>(dst_off_x)) / static_cast<float>(dst_w);
   const float y_factor = (pos.second - static_cast<float>(dst_off_y)) / static_cast<float>(dst_h);
 
   draw_material_ = material;
-  draw_pos_ = {x_factor * static_cast<float>(image_size.first), y_factor * static_cast<float>(image_size.second)};
+  draw_pos_ = {x_factor * img_w, y_factor * img_h};
 }
 
 bool Renderer2D::begin_frame()
@@ -283,22 +312,44 @@ void Renderer2D::run_frame()
   if (should_compile_) {
     should_compile_ = false;
 
-    fwrk::ImageCreateInfo create_info{.type = VK_IMAGE_TYPE_2D,
-                                      .size = {.width = image_size.first, .height = image_size.second, .depth = 1},
-                                      .format = VK_FORMAT_R32G32_SINT,
-                                      .flags = {},
-                                      .mips = 1,
-                                      .layers = 1,
-                                      .samples = VK_SAMPLE_COUNT_1_BIT,
-                                      .tiling = VK_IMAGE_TILING_OPTIMAL,
-                                      .usage = VK_IMAGE_USAGE_STORAGE_BIT};
+    fwrk::ImageCreateInfo create_info{
+        .type = VK_IMAGE_TYPE_2D,
+        .size = {.width = config_.scene_size.width, .height = config_.scene_size.height, .depth = 1},
+        .format = VK_FORMAT_R32G32_SINT,
+        .flags = {},
+        .mips = 1,
+        .layers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT};
     const fwrk::ResourceID jfa_1 = graph.create_image(create_info);
     const fwrk::ResourceID jfa_2 = graph.create_image(create_info);
-    create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-    create_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+    create_info.format = VK_FORMAT_R32_SFLOAT;
+    create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     const fwrk::ResourceID sdf = graph.create_image(create_info);
 
-    graph.add_compute_pass()
+    // kinda needs to be a multiple of 2.
+    const auto base_probe_dir_count = static_cast<uint32_t>(std::round(360.0f / config_.cascades.base_interval));
+    const auto probe_size = static_cast<uint32_t>(std::ceil(std::sqrt(base_probe_dir_count)));
+    const auto probe_per_row =
+        static_cast<uint32_t>(std::floor(static_cast<float>(config_.scene_size.width) / config_.cascades.base_spacing));
+    const auto probe_per_col = static_cast<uint32_t>(
+        std::floor(static_cast<float>(config_.scene_size.height) / config_.cascades.base_spacing));
+    const auto cascade_width = probe_per_row * probe_size;
+    const auto cascade_height = probe_per_col * probe_size;
+
+    create_info.size.width = cascade_width;
+    create_info.size.height = cascade_height;
+    create_info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    create_info.layers = config_.cascades.cascades;
+    create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+    const fwrk::ResourceID cascades = graph.create_image(create_info);
+
+    const auto base_probe_spacing = config_.cascades.base_spacing;
+    const auto base_probe_length = config_.cascades.base_length;
+
+    graph.add_compute_pass("Draw")
         .set_storage_image_write({.resource = {.id = scene_image_import_}})
         .set_storage_image_write({.resource = {.id = jfa_1}})
         .set_execute([this](vk::CommandBuffer cmd) {
@@ -309,19 +360,18 @@ void Renderer2D::run_frame()
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
           const DrawPushConstant push_constant{
-              .x = draw_pos_.first, .y = draw_pos_.second, .w = 3, .h = 3, .material_id = draw_material_};
+              .x = draw_pos_.first, .y = draw_pos_.second, .s = config_.drawing.size, .material_id = draw_material_};
 
           cmd.pushConstants(draw_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant),
                             &push_constant);
 
-          constexpr uint32_t gx = (3 + 7) / 8;
-          constexpr uint32_t gy = (3 + 7) / 8;
-          cmd.dispatch(gx, gy, 1);
+          const uint32_t gs = (config_.drawing.size + 7) / 8;
+          cmd.dispatch(gs, gs, 1);
 
           draw_material_ = 0;
         });
 
-    graph.add_compute_pass()
+    graph.add_compute_pass("Convert")
         .set_storage_image_read({.resource = {.id = scene_image_import_}})
         .set_storage_image_write({.resource = {.id = jfa_1}})
         .set_execute([this](vk::CommandBuffer cmd) {
@@ -336,16 +386,19 @@ void Renderer2D::run_frame()
           cmd.pushConstants(convert_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
                             sizeof(ConvertPushConstant), &push_constant);
 
-          constexpr uint32_t gx = (image_size.first + 7) / 8;
-          constexpr uint32_t gy = (image_size.second + 7) / 8;
+          const uint32_t gx = (config_.scene_size.width + 7) / 8;
+          const uint32_t gy = (config_.scene_size.height + 7) / 8;
           cmd.dispatch(gx, gy, 1);
         });
 
-    graph.add_compute_pass()
+    graph.add_compute_pass("JFA")
         .set_storage_image_write({.resource = {.id = jfa_1}})
         .set_storage_image_write({.resource = {.id = jfa_2}})
         .set_execute([this, jfa_1, jfa_2](vk::CommandBuffer cmd) {
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, jfa_pipeline_.get());
+          cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1,
+                                 &bindless_descriptor_set_, 0, nullptr);
+
 
           auto barrier = vk::ImageMemoryBarrier2{}
                              .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
@@ -358,22 +411,19 @@ void Renderer2D::run_frame()
                              .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
                              .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
 
-          bool use_jfa_1 = true;
-          constexpr auto k_start = image_size.first;
-          constexpr auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
-          for (uint32_t i = 1; i <= k_count; i++) {
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1,
-                                   &bindless_descriptor_set_, 0, nullptr);
+          const uint32_t gx = (config_.scene_size.width + 7) / 8;
+          const uint32_t gy = (config_.scene_size.height + 7) / 8;
 
+          bool use_jfa_1 = true;
+          const auto k_start = std::max(config_.scene_size.width, config_.scene_size.height);
+          const auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
+          for (uint32_t i = 1; i <= k_count; i++) {
             const JFAPushConstant push_constant{.read_id = (use_jfa_1 ? 1 : 2) + current_frame_ * 2,
                                                 .write_id = (use_jfa_1 ? 2 : 1) + current_frame_ * 2,
                                                 .k = k_start >> i};
-
             cmd.pushConstants(jfa_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant),
                               &push_constant);
 
-            constexpr uint32_t gx = (image_size.first + 7) / 8;
-            constexpr uint32_t gy = (image_size.second + 7) / 8;
             cmd.dispatch(gx, gy, 1);
 
             if (i > 1) {
@@ -385,10 +435,9 @@ void Renderer2D::run_frame()
           }
         });
 
-    graph.add_compute_pass()
+    graph.add_compute_pass("SDF")
         .set_storage_image_read({.resource = {.id = jfa_2}})
         .set_storage_image_write({.resource = {.id = sdf}})
-        .set_storage_image_read({.resource = {.id = scene_image_import_}})
         .set_execute([this](vk::CommandBuffer cmd) {
           cmd.bindPipeline(vk::PipelineBindPoint::eCompute, sdf_pipeline_.get());
           cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, sdf_pipeline_layout_.get(), 0, 1,
@@ -402,31 +451,65 @@ void Renderer2D::run_frame()
           cmd.pushConstants(sdf_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant),
                             &push_constant);
 
-          constexpr uint32_t gx = (image_size.first + 7) / 8;
-          constexpr uint32_t gy = (image_size.second + 7) / 8;
+          const uint32_t gx = (config_.scene_size.width + 7) / 8;
+          const uint32_t gy = (config_.scene_size.height + 7) / 8;
           cmd.dispatch(gx, gy, 1);
         });
 
-    graph.add_compute_pass()
+    graph.add_compute_pass("Cascades")
+        .set_storage_image_read({.resource = {.id = sdf}})
+        .set_storage_image_write({.resource = {.id = cascades}})
+        .set_execute([this, cascade_width, cascade_height, probe_size, base_probe_spacing, base_probe_dir_count,
+                      base_probe_length](vk::CommandBuffer cmd) {
+          cmd.bindPipeline(vk::PipelineBindPoint::eCompute, cascades_pipeline_.get());
+          cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, cascades_pipeline_layout_.get(), 0, 1,
+                                 &bindless_descriptor_set_, 0, nullptr);
+
+          CascadesPushConstant push_constant{.sdf_id = 5 + current_frame_,
+                                             .cascades_id = 7 + current_frame_,
+                                             .cascade_width = cascade_width,
+                                             .cascade_height = cascade_height,
+                                             .cascade = 3,
+                                             .base_probe_size = probe_size,
+                                             .base_spacing = base_probe_spacing,
+                                             .base_probe_dir_count = base_probe_dir_count,
+                                             .base_length = base_probe_length};
+
+          const uint32_t gx = (cascade_width + 7) / 8;
+          const uint32_t gy = (cascade_height + 7) / 8;
+
+          for (uint32_t i = 0; i < config_.cascades.cascades; i++) {
+            push_constant.cascade = i;
+
+            cmd.pushConstants(cascades_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                              sizeof(CascadesPushConstant), &push_constant);
+
+
+            cmd.dispatch(gx, gy, 1);
+          }
+        });
+
+    graph.add_compute_pass("Blit")
         .set_image_transfer_src({.resource = {.id = sdf}})
         .set_image_transfer_dst({.resource = {.id = swapchain_proxy_}})
         .set_execute([this, sdf](vk::CommandBuffer cmd) {
           const auto swp_w = swapchain_.extent().width;
           const auto swp_h = swapchain_.extent().height;
-          const float scale = std::min(static_cast<float>(swp_w) / static_cast<float>(image_size.first),
-                                       static_cast<float>(swp_h) / static_cast<float>(image_size.second));
+          const auto img_w = static_cast<float>(config_.scene_size.width);
+          const auto img_h = static_cast<float>(config_.scene_size.height);
 
-          const auto dst_w = static_cast<int32_t>(image_size.first * scale);
-          const auto dst_h = static_cast<int32_t>(image_size.second * scale);
+          const float scale = std::min(static_cast<float>(swp_w) / img_w, static_cast<float>(swp_h) / img_h);
+
+          const auto dst_w = static_cast<int32_t>(img_w * scale);
+          const auto dst_h = static_cast<int32_t>(img_h * scale);
 
           const int32_t dst_off_x = (static_cast<int32_t>(swp_w) - dst_w) / 2;
           const int32_t dst_off_y = (static_cast<int32_t>(swp_h) - dst_h) / 2;
 
-          const vk::ImageBlit blit{
-              {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-              {{{0, 0, 0}, {static_cast<int32_t>(image_size.first), static_cast<int32_t>(image_size.second), 1}}},
-              {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-              {{{dst_off_x, dst_off_y, 0}, {dst_off_x + dst_w, dst_off_y + dst_h, 1}}}};
+          const vk::ImageBlit blit{{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                   {{{0, 0, 0}, {static_cast<int32_t>(img_w), static_cast<int32_t>(img_h), 1}}},
+                                   {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                   {{{dst_off_x, dst_off_y, 0}, {dst_off_x + dst_w, dst_off_y + dst_h, 1}}}};
 
           cmd.blitImage(context_.get_raw_image(sdf), vk::ImageLayout::eTransferSrcOptimal,
                         swapchain_.image(image_index_), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
@@ -443,9 +526,10 @@ void Renderer2D::run_frame()
     subresource_range.setAspectMask(vk::ImageAspectFlagBits::eColor);
     subresource_range.setBaseMipLevel(0);
     subresource_range.setBaseArrayLayer(0);
-    subresource_range.setLevelCount(1);
-    subresource_range.setLayerCount(1);
+    subresource_range.setLevelCount(vk::RemainingMipLevels);
+    subresource_range.setLayerCount(vk::RemainingArrayLayers);
     const fwrk::ViewKey view_key{subresource_range, VK_IMAGE_VIEW_TYPE_2D};
+    const fwrk::ViewKey array_view_key{subresource_range, VK_IMAGE_VIEW_TYPE_2D_ARRAY};
 
     DescriptorWriter{}
         .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
@@ -459,6 +543,10 @@ void Renderer2D::run_frame()
         .add_image(0, 5, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 0),
                    vk::ImageLayout::eGeneral)
         .add_image(0, 6, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 1),
+                   vk::ImageLayout::eGeneral)
+        .add_image(0, 7, vk::DescriptorType::eStorageImage, context_.acquire_image_view(cascades, array_view_key, 0),
+                   vk::ImageLayout::eGeneral)
+        .add_image(0, 8, vk::DescriptorType::eStorageImage, context_.acquire_image_view(cascades, array_view_key, 1),
                    vk::ImageLayout::eGeneral)
         .update(device_.get(), bindless_descriptor_set_);
   }

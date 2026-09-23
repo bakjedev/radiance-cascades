@@ -7,7 +7,7 @@ layout(constant_id = 1) const uint img_height = 0;
 
 layout(push_constant) uniform PushConstant {
     ivec2 pos;
-    ivec2 size;
+    uint size;
     uint8_t material_id;
 } pushConstants;
 
@@ -16,8 +16,16 @@ layout(binding = 0) uniform uimage2D storageImagesU[];
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(local, pushConstants.size))) return;
-    ivec2 coord = local + pushConstants.pos;
+    if (any(greaterThanEqual(local, ivec2(pushConstants.size)))) return;
+    ivec2 start = pushConstants.pos - ivec2(pushConstants.size / 2);
+    ivec2 coord = start + local;
     if (any(greaterThanEqual(coord, ivec2(img_width, img_height))) || any(lessThan(coord, ivec2(0)))) return;
+
+    float dist = length(vec2(coord) - vec2(pushConstants.pos));
+    float radius = float(pushConstants.size) / 2.0;
+    if (dist >= radius) {
+        return;
+    }
+
     imageStore(storageImagesU[0], coord, ivec4(pushConstants.material_id));
 }

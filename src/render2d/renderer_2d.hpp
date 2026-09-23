@@ -18,6 +18,24 @@ class FileSystem;
 
 constexpr uint32_t frames_in_flight = 2;
 
+struct Renderer2DConfig {
+  struct DrawConfig {
+    uint32_t size{5};
+  } drawing;
+
+  struct SceneSize {
+    uint32_t width{256};
+    uint32_t height{256};
+  } scene_size;
+
+  struct CascadesConfig {
+    uint32_t cascades{4};
+    float base_spacing{8.0f};
+    float base_interval{90.0f};
+    float base_length{1.0f};
+  } cascades;
+};
+
 class Renderer2D {
 public:
   Renderer2D(Window& window, EventDispatcher& event_dispatcher, ResourceManager<ShaderResource>& resource_manager,
@@ -37,6 +55,8 @@ private:
   EventDispatcher& event_dispatcher_;
   ResourceManager<ShaderResource>& resource_manager_;
   FileSystem& file_system_;
+
+  Renderer2DConfig config_;
 
   Instance instance_;
   Device device_;
@@ -60,6 +80,10 @@ private:
   vk::UniqueShaderModule sdf_shader_module_;
   vk::UniquePipeline sdf_pipeline_;
 
+  vk::UniquePipelineLayout cascades_pipeline_layout_;
+  vk::UniqueShaderModule cascades_shader_module_;
+  vk::UniquePipeline cascades_pipeline_;
+
   vk::UniqueDescriptorPool descriptor_pool_;
   vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;
   vk::DescriptorSet bindless_descriptor_set_;
@@ -80,7 +104,7 @@ private:
   bool should_compile_ = true;
 
   uint8_t draw_material_ = 0;
-  std::pair<int32_t, int32_t> draw_pos_;
+  std::pair<uint32_t, uint32_t> draw_pos_;
 
   void import_resources();
 

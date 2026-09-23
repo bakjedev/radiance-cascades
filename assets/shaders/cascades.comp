@@ -1,0 +1,73 @@
+#version 450
+#extension GL_EXT_shader_image_load_formatted : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+#define PI 3.14159265359
+
+layout(constant_id = 0) const uint img_width = 0;
+layout(constant_id = 1) const uint img_height = 0;
+
+layout(push_constant) uniform PushConstant {
+    uint sdf_id;
+    uint cascades_id;
+    uint cascade_width;
+    uint cascade_height;
+    uint cascade;
+    uint base_probe_size;
+    float base_spacing;
+    uint base_probe_dir_count;
+    float base_length;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform image2D storageImagesF[];
+layout(binding = 0) uniform uimage2D storageImagesU[];
+layout(binding = 0) uniform image2DArray storageImageArraysF[];
+
+struct Material {
+    vec3 color;
+    float radiance;
+};
+
+layout(binding = 1) readonly buffer MaterialBuffer { Material materials[]; } storageBuffers[];
+
+void main() {
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(local, ivec2(pc.cascade_width, pc.cascade_height)))) return;
+
+    int probe_size = int(pc.base_probe_size) << pc.cascade;
+    ivec2 probe = local / probe_size;
+    vec2 origin = (vec2(probe) + 0.5) * (pc.base_spacing * float(1 << (pc.cascade)));
+
+    ivec2 interval = local % probe_size;
+    int dir_index = interval.y * probe_size + interval.x;
+
+    float angle = 2.0 * PI * ((float(dir_index) + 0.5) / float(pc.base_probe_dir_count));
+    vec2 dir = vec2(cos(angle), sin(angle));
+
+    float start_t = pc.base_length * ((pc.cascade == 0) ? 0.0 : float(1 << (2 * pc.cascade)));
+    float end_t = pc.base_length * float(1 << (2 * pc.cascade + 1));
+
+    float t = start_t;
+    float hit_t = -1.0;
+    uint8_t hit_mat;
+    for (int i = 0; i < 64; i++) {
+        vec2 point = origin + dir * t;
+        ivec2 coord = ivec2(floor(point));
+        if (any(greaterThanEqual(coord, ivec2(img_width, img_height))) || any(lessThan(coord, ivec2(0)))) break;
+        float distance = imageLoad(storageImagesF[pc.sdf_id], coord).x;
+        if (distance < 0.5) {
+            hit_t = t;
+            hit_mat = uint8_t(imageLoad(storageImagesU[0], coord).x);
+            break;
+        };
+        t += distance;
+        if (t > end_t) break;
+    }
+
+    if (hit_t > 0.0) {
+        Material material = storageBuffers[0].materials[hit_mat];
+        imageStore(storageImageArraysF[pc.cascades_id], ivec3(local, pc.cascade), vec4(material.color, material.radiance));
+    }
+}

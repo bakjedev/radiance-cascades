@@ -13,24 +13,12 @@ layout(push_constant) uniform PushConstant {
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0) uniform image2D storageImagesF[];
 layout(binding = 0) uniform iimage2D storageImagesI[];
-layout(binding = 0) uniform uimage2D storageImagesU[];
-
-struct Material {
-    vec3 color;
-    float radiance;
-};
-
-layout(binding = 1) readonly buffer MaterialBuffer { Material materials[]; } storageBuffers[];
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(local, ivec2(img_width, img_height)))) return;
+
     ivec2 seed = ivec2(imageLoad(storageImagesI[pushConstants.jfa_id], local).xy);
     float dist = distance(vec2(local), vec2(seed));
-    float t = pow(clamp(1.0 - dist / 100.0, 0.0, 1.0), 2);
-
-    uint drawn = imageLoad(storageImagesU[0], seed).x;
-    Material material = storageBuffers[0].materials[drawn];
-
-    imageStore(storageImagesF[pushConstants.sdf_id], local, vec4(material.color * material.radiance * t, 1.0));
+    imageStore(storageImagesF[pushConstants.sdf_id], local, vec4(dist));
 }

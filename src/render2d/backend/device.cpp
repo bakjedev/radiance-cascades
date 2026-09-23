@@ -40,7 +40,8 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
 
   const auto features =
       device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDevice8BitStorageFeatures,
-                          vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorIndexingFeatures>();
+                          vk::PhysicalDeviceShaderFloat16Int8Features, vk::PhysicalDeviceVulkan13Features,
+                          vk::PhysicalDeviceDescriptorIndexingFeatures>();
 
   if (!features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering ||
       !features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) {
@@ -59,6 +60,10 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
   }
 
   if (!features.get<vk::PhysicalDevice8BitStorageFeatures>().storagePushConstant8) {
+    return false;
+  }
+
+  if (!features.get<vk::PhysicalDeviceShaderFloat16Int8Features>().shaderInt8) {
     return false;
   }
 
@@ -112,12 +117,13 @@ void Device::create_device()
   const std::vector device_extensions = {vk::KHRSwapchainExtensionName};
 
   vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDevice8BitStorageFeatures,
-                     vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorIndexingFeatures>
+                     vk::PhysicalDeviceShaderFloat16Int8Features, vk::PhysicalDeviceVulkan13Features,
+                     vk::PhysicalDeviceDescriptorIndexingFeatures>
       feature_chain;
 
   feature_chain.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = vk::True;
   feature_chain.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = vk::True;
-  
+
   feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingPartiallyBound = vk::True;
   feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().runtimeDescriptorArray = vk::True;
   feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().shaderStorageImageArrayNonUniformIndexing =
@@ -127,6 +133,8 @@ void Device::create_device()
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat = vk::True;
 
   feature_chain.get<vk::PhysicalDevice8BitStorageFeatures>().storagePushConstant8 = vk::True;
+
+  feature_chain.get<vk::PhysicalDeviceShaderFloat16Int8Features>().shaderInt8 = vk::True;
 
   vk::DeviceCreateInfo create_info{};
   create_info.setPNext(&feature_chain.get<vk::PhysicalDeviceFeatures2>());
