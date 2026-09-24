@@ -47,6 +47,9 @@ shaders = [
     'jfa.comp',
     'sdf.comp',
     'cascades.comp',
+    'gen_debug.comp',
+    'debug.vert',
+    'debug.frag',
 ]
 
 compiled_shaders = []

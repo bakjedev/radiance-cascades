@@ -1,0 +1,74 @@
+#version 450
+#extension GL_EXT_shader_image_load_formatted : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+#define PI 3.14159265359
+
+layout(push_constant) uniform PushConstant {
+    uint vertex_id;
+    uint cascade_id;
+    uint cascade;
+    uint cascade_width;
+    uint cascade_height;
+    uint base_probe_size;
+    float base_spacing;
+    uint base_probe_dir_count;
+    float base_length;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform image2DArray storageImageArraysF[];
+
+struct DebugLineVertex {
+    vec3 color;
+    float thickness;
+    vec2 pos;
+};
+
+layout(binding = 1) buffer DebugLineVertexBuffer { DebugLineVertex vertices[]; } storageBuffers[];
+
+vec3 colors[] = vec3[](
+        vec3(1.0, 0.0, 0.0),
+        vec3(0.0, 1.0, 0.0),
+        vec3(0.0, 0.0, 1.0),
+        vec3(0.0, 1.0, 1.0)
+);
+
+void main() {
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(local, ivec2(pc.cascade_width, pc.cascade_height)))) return;
+
+    int probe_size = int(pc.base_probe_size) << pc.cascade;
+    ivec2 probe = local / probe_size;
+    vec2 origin = (vec2(probe) + 0.5) * (pc.base_spacing * float(1 << pc.cascade));
+
+    ivec2 interval = local % probe_size;
+    int dir_index = interval.y * probe_size + interval.x;
+    float angle = 2.0 * PI * ((float(dir_index) + 0.5) / float(pc.base_probe_dir_count << (2 * pc.cascade)));
+    vec2 dir = vec2(cos(angle), sin(angle));
+
+    float start_t = pc.base_length * ((pc.cascade == 0) ? 0.0 : float(1 << (2 * pc.cascade)));
+    float end_t = pc.base_length * float(1 << (2 * pc.cascade + 1));
+
+    vec2 from = origin + dir * start_t;
+    vec2 to = origin + dir * end_t;
+
+    vec4 hit_col = imageLoad(storageImageArraysF[pc.cascade_id], ivec3(local, pc.cascade));
+
+    vec3 color = colors[pc.cascade];
+    if (any(greaterThan(hit_col.xyz, vec3(0.0)))) {
+        color = vec3(1.0);
+    }
+
+    int offset = int(pc.cascade_width * pc.cascade_height * pc.cascade);
+    int index = local.y * int(pc.cascade_width) + local.x + offset;
+
+    storageBuffers[pc.vertex_id].vertices[2 * index].pos = from;
+    storageBuffers[pc.vertex_id].vertices[2 * index].color = color;
+    storageBuffers[pc.vertex_id].vertices[2 * index].thickness = 1.0;
+
+    storageBuffers[pc.vertex_id].vertices[2 * index + 1].pos = to;
+    storageBuffers[pc.vertex_id].vertices[2 * index + 1].color = color;
+    storageBuffers[pc.vertex_id].vertices[2 * index + 1].thickness = 1.0;
+}

@@ -30,10 +30,14 @@ struct Renderer2DConfig {
 
   struct CascadesConfig {
     uint32_t cascades{4};
-    float base_spacing{8.0f};
+    float base_spacing{4.0f};
     float base_interval{90.0f};
-    float base_length{1.0f};
+    float base_length{4.0f};
   } cascades;
+
+  struct DebugLinesConfig {
+    uint32_t max_debug_lines{262144};
+  } debug_lines;
 };
 
 class Renderer2D {
@@ -50,6 +54,20 @@ private:
   bool begin_frame();
   void run_frame();
   void end_frame();
+
+  void compile();
+
+  void draw_pass(vk::CommandBuffer cmd);
+  void convert_pass(vk::CommandBuffer cmd);
+  void jfa_pass(vk::CommandBuffer cmd, fwrk::ResourceID jfa_1, fwrk::ResourceID jfa_2);
+  void sdf_pass(vk::CommandBuffer cmd);
+  void cascades_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
+                     float base_probe_spacing, uint32_t base_probe_dir_count, float base_probe_length);
+  void blit_pass(vk::CommandBuffer cmd, fwrk::ResourceID sdf);
+  void generate_debug_lines_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height,
+                                 uint32_t probe_size, float spacing, uint32_t probe_dir_count, float length);
+  void debug_lines_pass(vk::CommandBuffer cmd, fwrk::ResourceID debug_lines_vertex, uint32_t cascade_width,
+                        uint32_t cascade_height);
 
   Window& window_;
   EventDispatcher& event_dispatcher_;
@@ -83,6 +101,15 @@ private:
   vk::UniquePipelineLayout cascades_pipeline_layout_;
   vk::UniqueShaderModule cascades_shader_module_;
   vk::UniquePipeline cascades_pipeline_;
+
+  vk::UniquePipelineLayout gen_debug_pipeline_layout_;
+  vk::UniqueShaderModule gen_debug_shader_module_;
+  vk::UniquePipeline gen_debug_pipeline_;
+
+  vk::UniquePipelineLayout debug_pipeline_layout_;
+  vk::UniqueShaderModule debug_vert_shader_module_;
+  vk::UniqueShaderModule debug_frag_shader_module_;
+  vk::UniquePipeline debug_pipeline_;
 
   vk::UniqueDescriptorPool descriptor_pool_;
   vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;

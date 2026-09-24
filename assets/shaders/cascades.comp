@@ -38,12 +38,12 @@ void main() {
 
     int probe_size = int(pc.base_probe_size) << pc.cascade;
     ivec2 probe = local / probe_size;
-    vec2 origin = (vec2(probe) + 0.5) * (pc.base_spacing * float(1 << (pc.cascade)));
+    vec2 origin = (vec2(probe) + 0.5) * (pc.base_spacing * float(1 << pc.cascade));
 
     ivec2 interval = local % probe_size;
     int dir_index = interval.y * probe_size + interval.x;
 
-    float angle = 2.0 * PI * ((float(dir_index) + 0.5) / float(pc.base_probe_dir_count));
+    float angle = 2.0 * PI * ((float(dir_index) + 0.5) / float(pc.base_probe_dir_count << (2 * pc.cascade)));
     vec2 dir = vec2(cos(angle), sin(angle));
 
     float start_t = pc.base_length * ((pc.cascade == 0) ? 0.0 : float(1 << (2 * pc.cascade)));
