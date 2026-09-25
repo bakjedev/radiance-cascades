@@ -355,7 +355,7 @@ void Renderer2D::plot(const std::pair<float, float>& pos, const uint8_t material
 }
 void Renderer2D::inc_debug_lines()
 {
-  if (debug_line_level >= config_.cascades.cascades) return;
+  if (debug_line_level > config_.cascades.cascades) return;
   debug_line_level++;
 }
 
@@ -764,7 +764,7 @@ void Renderer2D::generate_debug_lines_pass(vk::CommandBuffer cmd, const fwrk::Re
 
   GenDebugPushConstant push_constant{.vertex_id = 1 + current_frame_,
                                      .cascade_id = 7 + current_frame_,
-                                     .cascade = debug_line_level - 1,
+                                     .cascade = 0,
                                      .cascade_width = cascade_width,
                                      .cascade_height = cascade_height,
                                      .base_probe_size = probe_size,
@@ -772,10 +772,15 @@ void Renderer2D::generate_debug_lines_pass(vk::CommandBuffer cmd, const fwrk::Re
                                      .base_probe_dir_count = probe_dir_count,
                                      .base_length = length};
 
-  cmd.pushConstants(gen_debug_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
-                    sizeof(GenDebugPushConstant), &push_constant);
+  const bool show_all = debug_line_level > config_.cascades.cascades;
+  for (uint32_t i = show_all ? 0 : debug_line_level - 1; i < (show_all ? config_.cascades.cascades : debug_line_level);
+       i++) {
+    push_constant.cascade = i;
+    cmd.pushConstants(gen_debug_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                      sizeof(GenDebugPushConstant), &push_constant);
 
-  cmd.dispatch(gx, gy, 1);
+    cmd.dispatch(gx, gy, 1);
+  }
 }
 
 void Renderer2D::debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID debug_lines_vertex,
@@ -805,9 +810,11 @@ void Renderer2D::debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID 
   const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{swapchain_.extent().width, swapchain_.extent().height}};
   cmd.setScissor(0, 1, &scissor);
 
-  const uint32_t vertex_count = cascade_width * cascade_height * 2;
+  const bool show_all = debug_line_level > config_.cascades.cascades;
+  const uint32_t cascade_count = cascade_width * cascade_height;
+  const uint32_t vertex_count = cascade_count * 2 * (show_all ? config_.cascades.cascades : 1);
 
-  cmd.draw(vertex_count, 1, 0, 0);
+  cmd.draw(vertex_count, 1, show_all ? 0 : cascade_count * 2 * (debug_line_level - 1), 0);
 }
 
 

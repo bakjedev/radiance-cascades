@@ -60,7 +60,8 @@ void main() {
         color = vec3(1.0);
     }
 
-    int index = local.y * int(pc.cascade_width) + local.x;
+    int offset = int(pc.cascade_width * pc.cascade_height * pc.cascade);
+    int index = local.y * int(pc.cascade_width) + local.x + offset;
 
     storageBuffers[pc.vertex_id].vertices[2 * index].pos = from;
     storageBuffers[pc.vertex_id].vertices[2 * index].color = color;
