@@ -1,8 +1,7 @@
 #version 450
 
 layout(location = 0) in vec3 aCol;
-layout(location = 1) in float aThick;
-layout(location = 2) in vec2 aPos;
+layout(location = 1) in vec2 aPos;
 
 layout(constant_id = 0) const uint img_width = 0;
 layout(constant_id = 1) const uint img_height = 0;

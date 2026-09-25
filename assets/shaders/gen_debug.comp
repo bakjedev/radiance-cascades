@@ -22,7 +22,6 @@ layout(binding = 0) uniform image2DArray storageImageArraysF[];
 
 struct DebugLineVertex {
     vec3 color;
-    float thickness;
     vec2 pos;
 };
 
@@ -65,9 +64,7 @@ void main() {
 
     storageBuffers[pc.vertex_id].vertices[2 * index].pos = from;
     storageBuffers[pc.vertex_id].vertices[2 * index].color = color;
-    storageBuffers[pc.vertex_id].vertices[2 * index].thickness = 1.0;
 
     storageBuffers[pc.vertex_id].vertices[2 * index + 1].pos = to;
     storageBuffers[pc.vertex_id].vertices[2 * index + 1].color = color;
-    storageBuffers[pc.vertex_id].vertices[2 * index + 1].thickness = 1.0;
 }

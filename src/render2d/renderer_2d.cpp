@@ -56,9 +56,9 @@ namespace {
   };
 
   struct DebugLineVertex {
-    float color[3];
-    float thickness;
-    float pos[2];
+    float color[3]{};
+    float padding{};
+    float pos[2]{};
   };
 
   struct GenDebugPushConstant {
@@ -292,13 +292,11 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
 
     debug_pipeline_desc.vertex_attributes.emplace_back(0, 0, vk::Format::eR32G32B32Sfloat,
                                                        offsetof(DebugLineVertex, color));
-    debug_pipeline_desc.vertex_attributes.emplace_back(1, 0, vk::Format::eR32Sfloat,
-                                                       offsetof(DebugLineVertex, thickness));
-    debug_pipeline_desc.vertex_attributes.emplace_back(2, 0, vk::Format::eR32G32Sfloat, offsetof(DebugLineVertex, pos));
+    debug_pipeline_desc.vertex_attributes.emplace_back(1, 0, vk::Format::eR32G32Sfloat, offsetof(DebugLineVertex, pos));
 
     debug_pipeline_desc.input_assembly.topology = vk::PrimitiveTopology::eLineList;
 
-    debug_pipeline_desc.rasterization.lineWidth = 1.0;
+    debug_pipeline_desc.rasterization.lineWidth = 0.5;
 
     debug_pipeline_desc.depth_stencil.depthTestEnable = vk::False;
     debug_pipeline_desc.depth_stencil.depthWriteEnable = vk::False;

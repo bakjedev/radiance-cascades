@@ -55,7 +55,8 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
   }
 
   if (!features.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageReadWithoutFormat ||
-      !features.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat) {
+      !features.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat ||
+      !features.get<vk::PhysicalDeviceFeatures2>().features.wideLines) {
     return false;
   }
 
@@ -131,6 +132,7 @@ void Device::create_device()
 
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageReadWithoutFormat = vk::True;
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat = vk::True;
+  feature_chain.get<vk::PhysicalDeviceFeatures2>().features.wideLines = vk::True;
 
   feature_chain.get<vk::PhysicalDevice8BitStorageFeatures>().storagePushConstant8 = vk::True;
 
