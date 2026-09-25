@@ -355,6 +355,17 @@ void Renderer2D::plot(const std::pair<float, float>& pos, const uint8_t material
   draw_material_ = material;
   draw_pos_ = {x_factor * img_w, y_factor * img_h};
 }
+void Renderer2D::inc_debug_lines()
+{
+  if (debug_line_level >= config_.cascades.cascades) return;
+  debug_line_level++;
+}
+
+void Renderer2D::dec_debug_lines()
+{
+  if (debug_line_level == 0) return;
+  debug_line_level--;
+}
 
 bool Renderer2D::begin_frame()
 {
@@ -473,7 +484,8 @@ void Renderer2D::compile()
   const fwrk::BufferCreateInfo debug_create_info{
       .size = sizeof(DebugLineVertex) * config_.debug_lines.max_debug_lines * 2,
       .flags = {},
-      .usage = VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT};
+      .usage = VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT |
+               VK_BUFFER_USAGE_2_TRANSFER_DST_BIT};
   const fwrk::ResourceID debug_lines_vertex = graph.create_buffer(debug_create_info);
 
   // ------------------
@@ -516,17 +528,17 @@ void Renderer2D::compile()
   graph.add_compute_pass("Generate Debug Lines")
       .set_storage_buffer_write({.resource = {.id = debug_lines_vertex}})
       .set_storage_image_read({.resource = {.id = cascades}})
-      .set_execute([this, cascade_width, cascade_height, probe_size, base_probe_spacing, base_probe_dir_count,
-                    base_probe_length](vk::CommandBuffer cmd) {
-        generate_debug_lines_pass(cmd, cascade_width, cascade_height, probe_size, base_probe_spacing,
-                                  base_probe_dir_count, base_probe_length);
+      .set_execute([this, debug_lines_vertex, cascade_width, cascade_height, probe_size, base_probe_spacing,
+                    base_probe_dir_count, base_probe_length](vk::CommandBuffer cmd) {
+        generate_debug_lines_pass(cmd, debug_lines_vertex, cascade_width, cascade_height, probe_size,
+                                  base_probe_spacing, base_probe_dir_count, base_probe_length);
       });
 
   graph.add_graphics_pass("Debug lines")
       .set_color_attachment({.resource = {.id = swapchain_proxy_},
                              .load_op = fwrk::LoadOp::Clear,
                              .store_op = fwrk::StoreOp::Store,
-                             .clear_value = fwrk::ClearValue{0.0f, 0.0f, 0.0f, 0.0f}})
+                             .clear_value = fwrk::ClearValue{.r = 0.0f, .g = 0.0f, .b = 0.0f, .a = 0.0f}})
       .set_vertex_buffer_input(
           {.resource = {.id = debug_lines_vertex}, .stages = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT})
       .set_execute([this, debug_lines_vertex, cascade_width, cascade_height](vk::CommandBuffer cmd) {
@@ -725,10 +737,26 @@ void Renderer2D::blit_pass(vk::CommandBuffer cmd, const fwrk::ResourceID sdf)
                 vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eLinear);
 }
 
-void Renderer2D::generate_debug_lines_pass(vk::CommandBuffer cmd, const uint32_t cascade_width,
-                                           const uint32_t cascade_height, const uint32_t probe_size,
-                                           const float spacing, const uint32_t probe_dir_count, const float length)
+void Renderer2D::generate_debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID debug_line_vertex,
+                                           const uint32_t cascade_width, const uint32_t cascade_height,
+                                           const uint32_t probe_size, const float spacing,
+                                           const uint32_t probe_dir_count, const float length)
 {
+  cmd.fillBuffer(context_.get_raw_buffer(debug_line_vertex), {}, vk::WholeSize, 0);
+
+  auto barrier = vk::BufferMemoryBarrier2{}
+                     .setSrcStageMask(vk::PipelineStageFlagBits2::eTransfer)
+                     .setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite)
+                     .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+                     .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
+                     .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
+                     .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
+                     .setBuffer(context_.get_raw_buffer(debug_line_vertex))
+                     .setSize(vk::WholeSize)
+                     .setOffset(0);
+  cmd.pipelineBarrier2(vk::DependencyInfo{}.setBufferMemoryBarriers(barrier));
+
+  if (debug_line_level == 0) return;
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, gen_debug_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, gen_debug_pipeline_layout_.get(), 0, 1,
                          &bindless_descriptor_set_, 0, nullptr);
@@ -738,7 +766,7 @@ void Renderer2D::generate_debug_lines_pass(vk::CommandBuffer cmd, const uint32_t
 
   GenDebugPushConstant push_constant{.vertex_id = 1 + current_frame_,
                                      .cascade_id = 7 + current_frame_,
-                                     .cascade = 0,
+                                     .cascade = debug_line_level - 1,
                                      .cascade_width = cascade_width,
                                      .cascade_height = cascade_height,
                                      .base_probe_size = probe_size,
@@ -746,13 +774,10 @@ void Renderer2D::generate_debug_lines_pass(vk::CommandBuffer cmd, const uint32_t
                                      .base_probe_dir_count = probe_dir_count,
                                      .base_length = length};
 
-  for (uint32_t i = 0; i < config_.cascades.cascades; i++) {
-    push_constant.cascade = i;
-    cmd.pushConstants(gen_debug_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
-                      sizeof(GenDebugPushConstant), &push_constant);
+  cmd.pushConstants(gen_debug_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                    sizeof(GenDebugPushConstant), &push_constant);
 
-    cmd.dispatch(gx, gy, 1);
-  }
+  cmd.dispatch(gx, gy, 1);
 }
 
 void Renderer2D::debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID debug_lines_vertex,
@@ -782,7 +807,7 @@ void Renderer2D::debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID 
   const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{swapchain_.extent().width, swapchain_.extent().height}};
   cmd.setScissor(0, 1, &scissor);
 
-  const uint32_t vertex_count = cascade_width * cascade_height * 2 * config_.cascades.cascades;
+  const uint32_t vertex_count = cascade_width * cascade_height * 2;
 
   cmd.draw(vertex_count, 1, 0, 0);
 }

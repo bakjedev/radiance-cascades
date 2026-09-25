@@ -39,6 +39,12 @@ void Application::run()
       renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 2);
     }
 
+    if (input_.key_pressed(KeyboardKey::Up)) {
+      renderer_.inc_debug_lines();
+    } else if (input_.key_pressed(KeyboardKey::Down)) {
+      renderer_.dec_debug_lines();
+    }
+
     renderer_.render();
   }
 

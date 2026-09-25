@@ -36,7 +36,7 @@ struct Renderer2DConfig {
   } cascades;
 
   struct DebugLinesConfig {
-    uint32_t max_debug_lines{262144};
+    uint32_t max_debug_lines{1048576};
   } debug_lines;
 };
 
@@ -49,6 +49,8 @@ public:
   void render();
 
   void plot(const std::pair<float, float>& pos, uint8_t material);
+  void inc_debug_lines();
+  void dec_debug_lines();
 
 private:
   bool begin_frame();
@@ -64,8 +66,9 @@ private:
   void cascades_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
                      float base_probe_spacing, uint32_t base_probe_dir_count, float base_probe_length);
   void blit_pass(vk::CommandBuffer cmd, fwrk::ResourceID sdf);
-  void generate_debug_lines_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height,
-                                 uint32_t probe_size, float spacing, uint32_t probe_dir_count, float length);
+  void generate_debug_lines_pass(vk::CommandBuffer cmd, fwrk::ResourceID debug_line_vertex, uint32_t cascade_width,
+                                 uint32_t cascade_height, uint32_t probe_size, float spacing, uint32_t probe_dir_count,
+                                 float length);
   void debug_lines_pass(vk::CommandBuffer cmd, fwrk::ResourceID debug_lines_vertex, uint32_t cascade_width,
                         uint32_t cascade_height);
 
@@ -132,6 +135,7 @@ private:
 
   uint8_t draw_material_ = 0;
   std::pair<uint32_t, uint32_t> draw_pos_;
+  uint32_t debug_line_level = 0;
 
   void import_resources();
 
