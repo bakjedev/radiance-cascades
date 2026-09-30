@@ -50,6 +50,7 @@ shaders = [
     'gen_debug.comp',
     'debug.vert',
     'debug.frag',
+    'merge.comp',
 ]
 
 compiled_shaders = []

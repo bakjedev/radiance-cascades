@@ -1,0 +1,74 @@
+#version 450
+#extension GL_EXT_shader_image_load_formatted : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+layout(push_constant) uniform PushConstant {
+    uint cascades_id;
+    uint cascade;
+    uint cascade_width;
+    uint cascade_height;
+    uint base_probe_size;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform image2DArray storageImageArraysF[];
+
+ivec2 probe_offsets[] = ivec2[](
+        ivec2(0, 0),
+        ivec2(1, 0),
+        ivec2(0, 1),
+        ivec2(1, 1)
+);
+
+void main() {
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(local, ivec2(pc.cascade_width, pc.cascade_height)))) return;
+
+    int probe_size_n = int(pc.base_probe_size) << pc.cascade;
+    int probe_size_n_1 = int(pc.base_probe_size) << (pc.cascade + 1);
+    ivec2 dst_probe_index = local / probe_size_n;
+
+    vec2 bilinear_size = vec2(probe_size_n_1);
+    vec2 probe_n_center = vec2(dst_probe_index) + (bilinear_size * 0.5);
+
+    vec2 probe_n1_base_coord = (probe_n_center / bilinear_size) - vec2(0.5);
+    vec2 probes_ratio = fract(probe_n1_base_coord);
+
+    vec4 weights = vec4(
+            (1.0 - probes_ratio.x) * (1.0 - probes_ratio.y),
+            probes_ratio.x * (1.0 - probes_ratio.y),
+            (1.0 - probes_ratio.x) * probes_ratio.y,
+            probes_ratio.x * probes_ratio.y
+    );
+    ivec2 src_probe_index = ivec2(floor(probe_n1_base_coord));
+
+    ivec2 dst_dir = local % probe_size_n;
+    int dst_dir_index = dst_dir.y * probe_size_n + dst_dir.x;
+    int src_dir_index = dst_dir_index * 4;
+
+    vec4 dst_interval = imageLoad(storageImageArraysF[pc.cascades_id], ivec3(local, pc.cascade));
+
+    vec4 merged = vec4(0.0);
+    for (int dir = 0; dir < 4; dir++) {
+        vec4 radiance = vec4(0.0);
+        for (int prb = 0; prb < 4; prb++) {
+            ivec2 offset = probe_offsets[prb];
+            ivec2 index = src_probe_index + offset;
+            int dir_index = src_dir_index + dir;
+            const ivec2 dir_coord = ivec2(
+                    dir_index % probe_size_n_1.x,
+                    dir_index / probe_size_n_1.x
+            );
+            ivec2 texel = index * probe_size_n_1 + dir_coord;
+
+            vec4 src_interval = imageLoad(storageImageArraysF[pc.cascades_id], ivec3(texel, pc.cascade + 1));
+
+            vec3 new_radiance = dst_interval.rgb + (src_interval.rgb * dst_interval.a);
+            vec4 merge = vec4(new_radiance, dst_interval.a * src_interval.a);
+            radiance += merge * weights[prb];
+        }
+        merged += radiance / 4.0;
+    }
+
+    imageStore(storageImageArraysF[pc.cascades_id], ivec3(local, pc.cascade), merged);
+}

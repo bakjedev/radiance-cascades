@@ -52,7 +52,6 @@ namespace {
 
   struct Material {
     float color[3];
-    float radiance;
   };
 
   struct DebugLineVertex {
@@ -71,6 +70,14 @@ namespace {
     float base_spacing;
     uint32_t base_probe_dir_count;
     float base_length;
+  };
+
+  struct MergePushConstant {
+    uint32_t cascade_id;
+    uint32_t cascade;
+    uint32_t cascade_width;
+    uint32_t cascade_height;
+    uint32_t base_probe_size;
   };
 } // namespace
 
@@ -111,8 +118,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                .set_size(sizeof(Material) * 256)
                                .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
 
-  std::vector materials = {Material{}, Material{.color = {0.8f, 0.8f, 0.1f}, .radiance = 1.0f},
-                           Material{.color = {0.1f, 0.8f, 0.5f}, .radiance = 1.0f}};
+  std::vector materials = {Material{}, Material{.color = {0.8f, 0.8f, 0.1f}}, Material{.color = {0.1f, 0.8f, 0.5f}}};
   void* material_data;
   vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
   memcpy(material_data, materials.data(), sizeof(Material) * materials.size());
@@ -306,6 +312,25 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     debug_pipeline_desc.layout = debug_pipeline_layout_.get();
 
     debug_pipeline_ = create_graphics_pipeline(device_.get(), debug_pipeline_desc);
+  }
+
+  // Merge pipeline
+  {
+    vk::PushConstantRange merge_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(MergePushConstant)};
+
+    auto merge_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("merge.comp.spv", ShaderResourceLoader{&file_system_});
+
+    merge_shader_module_ = create_shader_module(device_.get(), merge_shader_resource->code);
+
+    merge_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&merge_push, 1});
+
+    const ComputePipelineDesc merge_pipeline_desc{.module = merge_shader_module_.get(),
+                                                  .specialization = &specialization_info,
+                                                  .layout = merge_pipeline_layout_.get()};
+
+    merge_pipeline_ = create_compute_pipeline(device_.get(), merge_pipeline_desc);
   }
 
   // ----------------------------------------
@@ -518,10 +543,11 @@ void Renderer2D::compile()
                       base_probe_length);
       });
 
-  // graph.add_compute_pass("Blit")
-  //     .set_image_transfer_src({.resource = {.id = sdf}})
-  //     .set_image_transfer_dst({.resource = {.id = swapchain_proxy_}})
-  //     .set_execute([this, sdf](vk::CommandBuffer cmd) { blit_pass(cmd, sdf); });
+  graph.add_compute_pass("Merge")
+      .set_storage_image_write({.resource = {.id = cascades}})
+      .set_execute([this, cascade_width, cascade_height, probe_size, cascades](vk::CommandBuffer cmd) {
+        merge_pass(cmd, cascade_width, cascade_height, probe_size, cascades);
+      });
 
   graph.add_compute_pass("Generate Debug Lines")
       .set_storage_buffer_write({.resource = {.id = debug_lines_vertex}})
@@ -711,30 +737,6 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const uint32_t cascade_wid
   }
 }
 
-void Renderer2D::blit_pass(vk::CommandBuffer cmd, const fwrk::ResourceID sdf)
-{
-  const auto swp_w = swapchain_.extent().width;
-  const auto swp_h = swapchain_.extent().height;
-  const auto img_w = static_cast<float>(config_.scene_size.width);
-  const auto img_h = static_cast<float>(config_.scene_size.height);
-
-  const float scale = std::min(static_cast<float>(swp_w) / img_w, static_cast<float>(swp_h) / img_h);
-
-  const auto dst_w = static_cast<int32_t>(img_w * scale);
-  const auto dst_h = static_cast<int32_t>(img_h * scale);
-
-  const int32_t dst_off_x = (static_cast<int32_t>(swp_w) - dst_w) / 2;
-  const int32_t dst_off_y = (static_cast<int32_t>(swp_h) - dst_h) / 2;
-
-  const vk::ImageBlit blit{{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                           {{{0, 0, 0}, {static_cast<int32_t>(img_w), static_cast<int32_t>(img_h), 1}}},
-                           {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                           {{{dst_off_x, dst_off_y, 0}, {dst_off_x + dst_w, dst_off_y + dst_h, 1}}}};
-
-  cmd.blitImage(context_.get_raw_image(sdf), vk::ImageLayout::eTransferSrcOptimal, swapchain_.image(image_index_),
-                vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eLinear);
-}
-
 void Renderer2D::generate_debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID debug_line_vertex,
                                            const uint32_t cascade_width, const uint32_t cascade_height,
                                            const uint32_t probe_size, const float spacing,
@@ -817,6 +819,46 @@ void Renderer2D::debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID 
   cmd.draw(vertex_count, 1, show_all ? 0 : cascade_count * 2 * (debug_line_level - 1), 0);
 }
 
+void Renderer2D::merge_pass(vk::CommandBuffer cmd, const uint32_t cascade_width, const uint32_t cascade_height,
+                            const uint32_t probe_size, const fwrk::ResourceID cascades)
+{
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, merge_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, merge_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
+                         0, nullptr);
+
+  const uint32_t gx = (cascade_width + 7) / 8;
+  const uint32_t gy = (cascade_height + 7) / 8;
+
+  MergePushConstant push_constant{
+      .cascade_id = 7 + current_frame_,
+      .cascade = 0,
+      .cascade_width = cascade_width,
+      .cascade_height = cascade_height,
+      .base_probe_size = probe_size,
+  };
+
+  auto barrier =
+      vk::ImageMemoryBarrier2{}
+          .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+          .setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
+          .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+          .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eShaderStorageRead)
+          .setOldLayout(vk::ImageLayout::eGeneral)
+          .setNewLayout(vk::ImageLayout::eGeneral)
+          .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
+          .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
+          .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, vk::RemainingArrayLayers})
+          .setImage(context_.get_raw_image(cascades));
+
+  for (uint32_t i = config_.cascades.cascades - 1; i-- > 0;) {
+    push_constant.cascade = i;
+    cmd.pushConstants(merge_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(MergePushConstant),
+                      &push_constant);
+
+    cmd.dispatch(gx, gy, 1);
+    cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+  }
+}
 
 void Renderer2D::import_resources()
 {

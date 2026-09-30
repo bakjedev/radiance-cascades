@@ -29,7 +29,7 @@ struct Renderer2DConfig {
   } scene_size;
 
   struct CascadesConfig {
-    uint32_t cascades{4};
+    uint32_t cascades{3};
     float base_spacing{4.0f};
     float base_interval{90.0f};
     float base_length{4.0f};
@@ -65,12 +65,13 @@ private:
   void sdf_pass(vk::CommandBuffer cmd);
   void cascades_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
                      float base_probe_spacing, uint32_t base_probe_dir_count, float base_probe_length);
-  void blit_pass(vk::CommandBuffer cmd, fwrk::ResourceID sdf);
   void generate_debug_lines_pass(vk::CommandBuffer cmd, fwrk::ResourceID debug_line_vertex, uint32_t cascade_width,
                                  uint32_t cascade_height, uint32_t probe_size, float spacing, uint32_t probe_dir_count,
                                  float length);
   void debug_lines_pass(vk::CommandBuffer cmd, fwrk::ResourceID debug_lines_vertex, uint32_t cascade_width,
                         uint32_t cascade_height);
+  void merge_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
+                  fwrk::ResourceID cascades);
 
   Window& window_;
   EventDispatcher& event_dispatcher_;
@@ -113,6 +114,10 @@ private:
   vk::UniqueShaderModule debug_vert_shader_module_;
   vk::UniqueShaderModule debug_frag_shader_module_;
   vk::UniquePipeline debug_pipeline_;
+
+  vk::UniquePipelineLayout merge_pipeline_layout_;
+  vk::UniqueShaderModule merge_shader_module_;
+  vk::UniquePipeline merge_pipeline_;
 
   vk::UniqueDescriptorPool descriptor_pool_;
   vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;

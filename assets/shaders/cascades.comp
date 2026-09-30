@@ -27,7 +27,6 @@ layout(binding = 0) uniform image2DArray storageImageArraysF[];
 
 struct Material {
     vec3 color;
-    float radiance;
 };
 
 layout(binding = 1) readonly buffer MaterialBuffer { Material materials[]; } storageBuffers[];
@@ -51,7 +50,7 @@ void main() {
 
     float t = start_t;
     float hit_t = -1.0;
-    uint8_t hit_mat;
+    uint8_t hit_mat = uint8_t(0);
     for (int i = 0; i < 64; i++) {
         vec2 point = origin + dir * t;
         ivec2 coord = ivec2(floor(point));
@@ -68,6 +67,7 @@ void main() {
 
     if (hit_t > 0.0) {
         Material material = storageBuffers[0].materials[hit_mat];
-        imageStore(storageImageArraysF[pc.cascades_id], ivec3(local, pc.cascade), vec4(material.color, material.radiance));
+        imageStore(storageImageArraysF[pc.cascades_id], ivec3(local, pc.cascade), vec4(material.color, 1.0));
+        return;
     }
 }
