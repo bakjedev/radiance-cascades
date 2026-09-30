@@ -51,6 +51,7 @@ shaders = [
     'debug.vert',
     'debug.frag',
     'merge.comp',
+    'composite.comp',
 ]
 
 compiled_shaders = []

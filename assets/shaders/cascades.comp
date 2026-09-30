@@ -46,18 +46,18 @@ void main() {
     vec2 dir = vec2(cos(angle), sin(angle));
 
     float start_t = pc.base_length * ((pc.cascade == 0) ? 0.0 : float(1 << (2 * pc.cascade)));
-    float end_t = pc.base_length * float(1 << (2 * pc.cascade + 1));
+    float end_t = pc.base_length * float(1 << (2 * (pc.cascade + 1)));
 
     float t = start_t;
-    float hit_t = -1.0;
-    uint8_t hit_mat = uint8_t(0);
+    bool hit = false;
+    uint8_t hit_mat;
     for (int i = 0; i < 64; i++) {
         vec2 point = origin + dir * t;
         ivec2 coord = ivec2(floor(point));
         if (any(greaterThanEqual(coord, ivec2(img_width, img_height))) || any(lessThan(coord, ivec2(0)))) break;
         float distance = imageLoad(storageImagesF[pc.sdf_id], coord).x;
-        if (distance < 0.5) {
-            hit_t = t;
+        if (distance < 0.1) {
+            hit = true;
             hit_mat = uint8_t(imageLoad(storageImagesU[0], coord).x);
             break;
         };
@@ -65,9 +65,7 @@ void main() {
         if (t > end_t) break;
     }
 
-    if (hit_t > 0.0) {
-        Material material = storageBuffers[0].materials[hit_mat];
-        imageStore(storageImageArraysF[pc.cascades_id], ivec3(local, pc.cascade), vec4(material.color, 1.0));
-        return;
-    }
+    vec3 radiance = hit ? storageBuffers[0].materials[hit_mat].color : vec3(0.0);
+    float alpha = hit ? 0.0 : 1.0;
+    imageStore(storageImageArraysF[pc.cascades_id], ivec3(local, pc.cascade), vec4(radiance, alpha));
 }

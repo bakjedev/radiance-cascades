@@ -48,7 +48,7 @@ void main() {
     vec2 dir = vec2(cos(angle), sin(angle));
 
     float start_t = pc.base_length * ((pc.cascade == 0) ? 0.0 : float(1 << (2 * pc.cascade)));
-    float end_t = pc.base_length * float(1 << (2 * pc.cascade + 1));
+    float end_t = pc.base_length * float(1 << (2 * (pc.cascade + 1)));
 
     vec2 from = origin + dir * start_t;
     vec2 to = origin + dir * end_t;

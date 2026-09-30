@@ -72,6 +72,7 @@ private:
                         uint32_t cascade_height);
   void merge_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
                   fwrk::ResourceID cascades);
+  void composite_pass(vk::CommandBuffer cmd, float spacing, uint32_t probe_size);
 
   Window& window_;
   EventDispatcher& event_dispatcher_;
@@ -118,6 +119,10 @@ private:
   vk::UniquePipelineLayout merge_pipeline_layout_;
   vk::UniqueShaderModule merge_shader_module_;
   vk::UniquePipeline merge_pipeline_;
+
+  vk::UniquePipelineLayout composite_pipeline_layout_;
+  vk::UniqueShaderModule composite_shader_module_;
+  vk::UniquePipeline composite_pipeline_;
 
   vk::UniqueDescriptorPool descriptor_pool_;
   vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;

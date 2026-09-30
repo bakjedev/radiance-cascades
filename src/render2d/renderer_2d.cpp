@@ -79,6 +79,13 @@ namespace {
     uint32_t cascade_height;
     uint32_t base_probe_size;
   };
+
+  struct CompositePushConstant {
+    uint32_t cascade_id;
+    uint32_t composite_id;
+    float spacing;
+    uint32_t probe_size;
+  };
 } // namespace
 
 Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
@@ -333,6 +340,25 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     merge_pipeline_ = create_compute_pipeline(device_.get(), merge_pipeline_desc);
   }
 
+  // composite pipeline
+  {
+    vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
+
+    auto composite_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("composite.comp.spv", ShaderResourceLoader{&file_system_});
+
+    composite_shader_module_ = create_shader_module(device_.get(), composite_shader_resource->code);
+
+    composite_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&composite_push, 1});
+
+    const ComputePipelineDesc composite_pipeline_desc{.module = composite_shader_module_.get(),
+                                                      .specialization = &specialization_info,
+                                                      .layout = composite_pipeline_layout_.get()};
+
+    composite_pipeline_ = create_compute_pipeline(device_.get(), composite_pipeline_desc);
+  }
+
   // ----------------------------------------
   // Imports
   // ----------------------------------------
@@ -484,6 +510,10 @@ void Renderer2D::compile()
   create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
   const fwrk::ResourceID sdf = graph.create_image(create_info);
 
+  create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+  create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  const fwrk::ResourceID composite = graph.create_image(create_info);
+
   // kinda needs to be a multiple of 2.
   const auto base_probe_dir_count = static_cast<uint32_t>(std::round(360.0f / config_.cascades.base_interval));
   const auto probe_size = static_cast<uint32_t>(std::ceil(std::sqrt(base_probe_dir_count)));
@@ -549,6 +579,13 @@ void Renderer2D::compile()
         merge_pass(cmd, cascade_width, cascade_height, probe_size, cascades);
       });
 
+  graph.add_compute_pass("Composite")
+      .set_storage_image_read({.resource = {.id = cascades}})
+      .set_storage_image_write({.resource = {.id = composite}})
+      .set_execute([this, base_probe_spacing, probe_size](vk::CommandBuffer cmd) {
+        composite_pass(cmd, base_probe_spacing, probe_size);
+      });
+
   graph.add_compute_pass("Generate Debug Lines")
       .set_storage_buffer_write({.resource = {.id = debug_lines_vertex}})
       .set_storage_image_read({.resource = {.id = cascades}})
@@ -603,6 +640,10 @@ void Renderer2D::compile()
                  vk::ImageLayout::eGeneral)
       .add_buffer(1, 1, vk::DescriptorType::eStorageBuffer, context_.get_raw_buffer(debug_lines_vertex, 0))
       .add_buffer(1, 2, vk::DescriptorType::eStorageBuffer, context_.get_raw_buffer(debug_lines_vertex, 1))
+      .add_image(0, 9, vk::DescriptorType::eStorageImage, context_.acquire_image_view(composite, view_key, 0),
+                 vk::ImageLayout::eGeneral)
+      .add_image(0, 10, vk::DescriptorType::eStorageImage, context_.acquire_image_view(composite, view_key, 1),
+                 vk::ImageLayout::eGeneral)
       .update(device_.get(), bindless_descriptor_set_);
 }
 
@@ -858,6 +899,25 @@ void Renderer2D::merge_pass(vk::CommandBuffer cmd, const uint32_t cascade_width,
     cmd.dispatch(gx, gy, 1);
     cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
   }
+}
+
+void Renderer2D::composite_pass(vk::CommandBuffer cmd, const float spacing, const uint32_t probe_size)
+{
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout_.get(), 0, 1,
+                         &bindless_descriptor_set_, 0, nullptr);
+
+  const CompositePushConstant push_constant{.cascade_id = 7 + current_frame_,
+                                            .composite_id = 9 + current_frame_,
+                                            .spacing = spacing,
+                                            .probe_size = probe_size};
+
+  cmd.pushConstants(composite_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                    sizeof(CompositePushConstant), &push_constant);
+
+  const uint32_t gx = (config_.scene_size.width + 7) / 8;
+  const uint32_t gy = (config_.scene_size.height + 7) / 8;
+  cmd.dispatch(gx, gy, 1);
 }
 
 void Renderer2D::import_resources()
