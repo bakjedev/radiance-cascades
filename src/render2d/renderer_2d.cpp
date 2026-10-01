@@ -52,6 +52,7 @@ namespace {
 
   struct Material {
     float color[3];
+    float padding{};
   };
 
   struct DebugLineVertex {
@@ -125,7 +126,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                .set_size(sizeof(Material) * 256)
                                .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
 
-  std::vector materials = {Material{}, Material{.color = {0.8f, 0.8f, 0.1f}}, Material{.color = {0.1f, 0.8f, 0.5f}}};
+  std::vector materials = {Material{}, Material{.color = {0.0f, 1.0f, 0.0f}}, Material{.color = {0.0f, 0.0f, 0.0f}}};
   void* material_data;
   vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
   memcpy(material_data, materials.data(), sizeof(Material) * materials.size());
@@ -586,6 +587,11 @@ void Renderer2D::compile()
         composite_pass(cmd, base_probe_spacing, probe_size);
       });
 
+  graph.add_compute_pass("Blit")
+      .set_image_transfer_src({.resource = {.id = composite}})
+      .set_image_transfer_dst({.resource = {.id = swapchain_proxy_}})
+      .set_execute([this, composite](vk::CommandBuffer cmd) { blit_pass(cmd, composite); });
+
   graph.add_compute_pass("Generate Debug Lines")
       .set_storage_buffer_write({.resource = {.id = debug_lines_vertex}})
       .set_storage_image_read({.resource = {.id = cascades}})
@@ -596,10 +602,8 @@ void Renderer2D::compile()
       });
 
   graph.add_graphics_pass("Debug lines")
-      .set_color_attachment({.resource = {.id = swapchain_proxy_},
-                             .load_op = fwrk::LoadOp::Clear,
-                             .store_op = fwrk::StoreOp::Store,
-                             .clear_value = fwrk::ClearValue{.r = 0.0f, .g = 0.0f, .b = 0.0f, .a = 0.0f}})
+      .set_color_attachment(
+          {.resource = {.id = swapchain_proxy_}, .load_op = fwrk::LoadOp::Load, .store_op = fwrk::StoreOp::Store})
       .set_vertex_buffer_input(
           {.resource = {.id = debug_lines_vertex}, .stages = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT})
       .set_execute([this, debug_lines_vertex, cascade_width, cascade_height](vk::CommandBuffer cmd) {
@@ -918,6 +922,30 @@ void Renderer2D::composite_pass(vk::CommandBuffer cmd, const float spacing, cons
   const uint32_t gx = (config_.scene_size.width + 7) / 8;
   const uint32_t gy = (config_.scene_size.height + 7) / 8;
   cmd.dispatch(gx, gy, 1);
+}
+
+void Renderer2D::blit_pass(vk::CommandBuffer cmd, const fwrk::ResourceID composite)
+{
+  const auto swp_w = swapchain_.extent().width;
+  const auto swp_h = swapchain_.extent().height;
+  const auto img_w = static_cast<float>(config_.scene_size.width);
+  const auto img_h = static_cast<float>(config_.scene_size.height);
+
+  const float scale = std::min(static_cast<float>(swp_w) / img_w, static_cast<float>(swp_h) / img_h);
+
+  const auto dst_w = static_cast<int32_t>(img_w * scale);
+  const auto dst_h = static_cast<int32_t>(img_h * scale);
+
+  const int32_t dst_off_x = (static_cast<int32_t>(swp_w) - dst_w) / 2;
+  const int32_t dst_off_y = (static_cast<int32_t>(swp_h) - dst_h) / 2;
+
+  const vk::ImageBlit blit{{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                           {{{0, 0, 0}, {static_cast<int32_t>(img_w), static_cast<int32_t>(img_h), 1}}},
+                           {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                           {{{dst_off_x, dst_off_y, 0}, {dst_off_x + dst_w, dst_off_y + dst_h, 1}}}};
+
+  cmd.blitImage(context_.get_raw_image(composite), vk::ImageLayout::eTransferSrcOptimal, swapchain_.image(image_index_),
+                vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eLinear);
 }
 
 void Renderer2D::import_resources()

@@ -29,7 +29,7 @@ struct Renderer2DConfig {
   } scene_size;
 
   struct CascadesConfig {
-    uint32_t cascades{3};
+    uint32_t cascades{4};
     float base_spacing{4.0f};
     float base_interval{90.0f};
     float base_length{4.0f};
@@ -73,6 +73,7 @@ private:
   void merge_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
                   fwrk::ResourceID cascades);
   void composite_pass(vk::CommandBuffer cmd, float spacing, uint32_t probe_size);
+  void blit_pass(vk::CommandBuffer cmd, fwrk::ResourceID composite);
 
   Window& window_;
   EventDispatcher& event_dispatcher_;

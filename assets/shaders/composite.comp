@@ -55,5 +55,5 @@ void main() {
         sum += sub_sum / dir_count;
     }
 
-    imageStore(storageImagesF[pc.composite_id], local, vec4(sum.xyz, 1.0));
+    imageStore(storageImagesF[pc.composite_id], local, sum);
 }
