@@ -87,14 +87,17 @@ namespace {
     float spacing;
     uint32_t probe_size;
   };
+
+  struct BlitPushConstant {
+    uint32_t composite_id;
+  };
 } // namespace
 
 Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                        ResourceManager<ShaderResource>& resource_manager, FileSystem& file_system) :
     window_(window), event_dispatcher_(event_dispatcher), resource_manager_(resource_manager),
     file_system_(file_system), device_(instance_.get(), create_surface(window, instance_)),
-    swapchain_(device_, {window.width(), window.height()},
-               vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst),
+    swapchain_(device_, {window.width(), window.height()}, vk::ImageUsageFlagBits::eColorAttachment),
     fwrk_allocator_(device_.get_allocator()), context_(device_.get(), frames_in_flight, fwrk_allocator_)
 {
   for (Frame& frame: frames_) {
@@ -126,26 +129,39 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                .set_size(sizeof(Material) * 256)
                                .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
 
-  std::vector materials = {Material{}, Material{.color = {0.0f, 1.0f, 0.0f}}, Material{.color = {0.0f, 0.0f, 0.0f}}};
+  std::vector materials = {Material{}, Material{.color = {0.0f, 1.0f, 0.0f}}, Material{.color = {0.0f, 0.0f, 0.0f}},
+                           Material{.color = {0.0f, 1.0f, 1.0f}}};
   void* material_data;
   vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
   memcpy(material_data, materials.data(), sizeof(Material) * materials.size());
   vmaUnmapMemory(device_.get_allocator(), material_buffer_->allocation());
 
   // ----------------------------------------
+  // Sampler
+  // ----------------------------------------
+  constexpr vk::SamplerCreateInfo sampler_info{};
+  sampler_ = device_.get().createSamplerUnique(sampler_info);
+
+  // ----------------------------------------
   // Descriptors
   // ----------------------------------------
   std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 100},
-                   vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 100}};
+                   vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 100},
+                   vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 100},
+                   vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 100}};
   descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 1);
 
   // Bindless
   {
     bindless_descriptor_set_layout_ = create_descriptor_set_layout(
         device_.get(), DescriptorSetLayoutDesc{}
-                           .add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
+                           .add_binding(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eAll,
                                         vk::DescriptorBindingFlagBits::ePartiallyBound, 100)
-                           .add_binding(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute,
+                           .add_binding(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eAll,
+                                        vk::DescriptorBindingFlagBits::ePartiallyBound, 100)
+                           .add_binding(2, vk::DescriptorType::eSampledImage, vk::ShaderStageFlagBits::eAll,
+                                        vk::DescriptorBindingFlagBits::ePartiallyBound, 100)
+                           .add_binding(3, vk::DescriptorType::eSampler, vk::ShaderStageFlagBits::eAll,
                                         vk::DescriptorBindingFlagBits::ePartiallyBound, 100));
 
     bindless_descriptor_set_ = device_.get()
@@ -158,6 +174,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   DescriptorWriter{}
       .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
       .add_buffer(1, 0, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
+      .add_image(3, 0, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .update(device_.get(), bindless_descriptor_set_);
 
   // ----------------------------------------
@@ -341,7 +358,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     merge_pipeline_ = create_compute_pipeline(device_.get(), merge_pipeline_desc);
   }
 
-  // composite pipeline
+  // Composite pipeline
   {
     vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
 
@@ -358,6 +375,35 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                       .layout = composite_pipeline_layout_.get()};
 
     composite_pipeline_ = create_compute_pipeline(device_.get(), composite_pipeline_desc);
+  }
+
+  // Blit pipeline
+  {
+    vk::PushConstantRange blit_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant)};
+
+    auto blit_vert_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("blit.vert.spv", ShaderResourceLoader{&file_system_});
+    auto blit_frag_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("blit.frag.spv", ShaderResourceLoader{&file_system_});
+
+    blit_vert_shader_module_ = create_shader_module(device_.get(), blit_vert_shader_resource->code);
+    blit_frag_shader_module_ = create_shader_module(device_.get(), blit_frag_shader_resource->code);
+
+    blit_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&blit_push, 1});
+
+    GraphicsPipelineDesc blit_pipeline_desc{};
+    blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, blit_vert_shader_module_.get());
+    blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eFragment, blit_frag_shader_module_.get());
+
+    blit_pipeline_desc.depth_stencil.depthTestEnable = vk::False;
+    blit_pipeline_desc.depth_stencil.depthWriteEnable = vk::False;
+
+    blit_pipeline_desc.add_attachment(swapchain_.format());
+
+    blit_pipeline_desc.layout = blit_pipeline_layout_.get();
+
+    blit_pipeline_ = create_graphics_pipeline(device_.get(), blit_pipeline_desc);
   }
 
   // ----------------------------------------
@@ -508,11 +554,11 @@ void Renderer2D::compile()
   const fwrk::ResourceID jfa_2 = graph.create_image(create_info);
 
   create_info.format = VK_FORMAT_R32_SFLOAT;
-  create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT;
   const fwrk::ResourceID sdf = graph.create_image(create_info);
 
-  create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-  create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  create_info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+  create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
   const fwrk::ResourceID composite = graph.create_image(create_info);
 
   // kinda needs to be a multiple of 2.
@@ -587,10 +633,13 @@ void Renderer2D::compile()
         composite_pass(cmd, base_probe_spacing, probe_size);
       });
 
-  graph.add_compute_pass("Blit")
-      .set_image_transfer_src({.resource = {.id = composite}})
-      .set_image_transfer_dst({.resource = {.id = swapchain_proxy_}})
-      .set_execute([this, composite](vk::CommandBuffer cmd) { blit_pass(cmd, composite); });
+  graph.add_graphics_pass("Blit")
+      .set_image_read({.resource = {.id = composite}})
+      .set_color_attachment({.resource = {.id = swapchain_proxy_},
+                             .load_op = fwrk::LoadOp::Clear,
+                             .store_op = fwrk::StoreOp::Store,
+                             .clear_value = {.r = 0.0f, .g = 0.0f, .b = 0.0f, .a = 0.0}})
+      .set_execute([this](vk::CommandBuffer cmd) { blit_pass(cmd); });
 
   graph.add_compute_pass("Generate Debug Lines")
       .set_storage_buffer_write({.resource = {.id = debug_lines_vertex}})
@@ -648,6 +697,10 @@ void Renderer2D::compile()
                  vk::ImageLayout::eGeneral)
       .add_image(0, 10, vk::DescriptorType::eStorageImage, context_.acquire_image_view(composite, view_key, 1),
                  vk::ImageLayout::eGeneral)
+      .add_image(2, 0, vk::DescriptorType::eSampledImage, context_.acquire_image_view(composite, view_key, 0),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, 1, vk::DescriptorType::eSampledImage, context_.acquire_image_view(composite, view_key, 1),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
       .update(device_.get(), bindless_descriptor_set_);
 }
 
@@ -924,28 +977,39 @@ void Renderer2D::composite_pass(vk::CommandBuffer cmd, const float spacing, cons
   cmd.dispatch(gx, gy, 1);
 }
 
-void Renderer2D::blit_pass(vk::CommandBuffer cmd, const fwrk::ResourceID composite)
+void Renderer2D::blit_pass(vk::CommandBuffer cmd)
 {
-  const auto swp_w = swapchain_.extent().width;
-  const auto swp_h = swapchain_.extent().height;
+  cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, blit_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blit_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
+                         0, nullptr);
+
+  const auto swp_w = static_cast<float>(swapchain_.extent().width);
+  const auto swp_h = static_cast<float>(swapchain_.extent().height);
   const auto img_w = static_cast<float>(config_.scene_size.width);
   const auto img_h = static_cast<float>(config_.scene_size.height);
 
-  const float scale = std::min(static_cast<float>(swp_w) / img_w, static_cast<float>(swp_h) / img_h);
+  const float scale = std::min(swp_w / img_w, swp_h / img_h);
 
-  const auto dst_w = static_cast<int32_t>(img_w * scale);
-  const auto dst_h = static_cast<int32_t>(img_h * scale);
+  const float dst_w = img_w * scale;
+  const float dst_h = img_h * scale;
 
-  const int32_t dst_off_x = (static_cast<int32_t>(swp_w) - dst_w) / 2;
-  const int32_t dst_off_y = (static_cast<int32_t>(swp_h) - dst_h) / 2;
+  const float dst_off_x = (swp_w - dst_w) / 2;
+  const float dst_off_y = (swp_h - dst_h) / 2;
 
-  const vk::ImageBlit blit{{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                           {{{0, 0, 0}, {static_cast<int32_t>(img_w), static_cast<int32_t>(img_h), 1}}},
-                           {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                           {{{dst_off_x, dst_off_y, 0}, {dst_off_x + dst_w, dst_off_y + dst_h, 1}}}};
+  const vk::Viewport viewport{dst_off_x, dst_off_y, dst_w, dst_h};
+  cmd.setViewport(0, 1, &viewport);
 
-  cmd.blitImage(context_.get_raw_image(composite), vk::ImageLayout::eTransferSrcOptimal, swapchain_.image(image_index_),
-                vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eLinear);
+  const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{swapchain_.extent().width, swapchain_.extent().height}};
+  cmd.setScissor(0, 1, &scissor);
+
+  const BlitPushConstant push_constant{
+      .composite_id = current_frame_,
+  };
+
+  cmd.pushConstants(blit_pipeline_layout_.get(), vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant),
+                    &push_constant);
+
+  cmd.draw(3, 1, 0, 0);
 }
 
 void Renderer2D::import_resources()

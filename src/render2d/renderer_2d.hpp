@@ -20,19 +20,19 @@ constexpr uint32_t frames_in_flight = 2;
 
 struct Renderer2DConfig {
   struct DrawConfig {
-    uint32_t size{5};
+    uint32_t size{25};
   } drawing;
 
   struct SceneSize {
-    uint32_t width{256};
-    uint32_t height{256};
+    uint32_t width{1024};
+    uint32_t height{1024};
   } scene_size;
 
   struct CascadesConfig {
-    uint32_t cascades{4};
-    float base_spacing{4.0f};
+    uint32_t cascades{6};
+    float base_spacing{1.0f};
     float base_interval{90.0f};
-    float base_length{4.0f};
+    float base_length{0.8f};
   } cascades;
 
   struct DebugLinesConfig {
@@ -73,7 +73,7 @@ private:
   void merge_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
                   fwrk::ResourceID cascades);
   void composite_pass(vk::CommandBuffer cmd, float spacing, uint32_t probe_size);
-  void blit_pass(vk::CommandBuffer cmd, fwrk::ResourceID composite);
+  void blit_pass(vk::CommandBuffer cmd);
 
   Window& window_;
   EventDispatcher& event_dispatcher_;
@@ -125,9 +125,16 @@ private:
   vk::UniqueShaderModule composite_shader_module_;
   vk::UniquePipeline composite_pipeline_;
 
+  vk::UniquePipelineLayout blit_pipeline_layout_;
+  vk::UniqueShaderModule blit_vert_shader_module_;
+  vk::UniqueShaderModule blit_frag_shader_module_;
+  vk::UniquePipeline blit_pipeline_;
+
   vk::UniqueDescriptorPool descriptor_pool_;
   vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;
   vk::DescriptorSet bindless_descriptor_set_;
+
+  vk::UniqueSampler sampler_;
 
   std::optional<Image> scene_image_;
   vk::UniqueImageView scene_image_view_;

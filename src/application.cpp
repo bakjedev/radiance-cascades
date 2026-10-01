@@ -37,6 +37,8 @@ void Application::run()
       renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 1);
     } else if (input_.mouse_down(MouseButton::Right)) {
       renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 2);
+    } else if (input_.mouse_down(MouseButton::Middle)) {
+      renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 3);
     }
 
     if (input_.key_pressed(KeyboardKey::Up)) {
