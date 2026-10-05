@@ -4,6 +4,8 @@
 
 #include "event_dispatcher.hpp"
 
+#include <stdexcept>
+
 void WindowDestructor::operator()(SDL_Window* window) const { SDL_DestroyWindow(window); }
 
 Window::Window(EventDispatcher& event_dispatcher, const uint32_t width, const uint32_t height, const char* title) :
