@@ -18,11 +18,15 @@ add_project_arguments(compiler.get_supported_arguments(
 
 add_project_arguments('-DVULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1', language : 'cpp')
 
-framework_dep = dependency('framework')
+framework_dep = dependency('framework', default_options : ['default_library=static'])
 
 vulkan_dep = dependency('vulkan', include_type : 'system')
-sdl3_dep = dependency('sdl3')
+sdl3_dep = dependency('sdl3', include_type : 'system', default_options : ['default_library=static', 'werror=false', 'warning_level=0'])
 vma_dep = dependency('VulkanMemoryAllocator', include_type : 'system')
+
+if compiler.get_argument_syntax() == 'msvc'
+    add_project_arguments('/external:anglebrackets', '/external:W0', language : 'cpp')
+endif
 
 sources = files(
     'src/main.cpp',

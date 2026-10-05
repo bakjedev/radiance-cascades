@@ -322,8 +322,9 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     debug_pipeline_desc.vertex_bindings.emplace_back(0, 32);
 
     debug_pipeline_desc.vertex_attributes.emplace_back(0, 0, vk::Format::eR32G32B32Sfloat,
-                                                       offsetof(DebugLineVertex, color));
-    debug_pipeline_desc.vertex_attributes.emplace_back(1, 0, vk::Format::eR32G32Sfloat, offsetof(DebugLineVertex, pos));
+                                                       static_cast<uint32_t>(offsetof(DebugLineVertex, color)));
+    debug_pipeline_desc.vertex_attributes.emplace_back(1, 0, vk::Format::eR32G32Sfloat,
+                                                       static_cast<uint32_t>(offsetof(DebugLineVertex, pos)));
 
     debug_pipeline_desc.input_assembly.topology = vk::PrimitiveTopology::eLineList;
 
@@ -449,7 +450,7 @@ void Renderer2D::plot(const std::pair<float, float>& pos, const uint8_t material
   const float y_factor = (pos.second - static_cast<float>(dst_off_y)) / static_cast<float>(dst_h);
 
   draw_material_ = material;
-  draw_pos_ = {x_factor * img_w, y_factor * img_h};
+  draw_pos_ = {static_cast<uint32_t>(x_factor * img_w), static_cast<uint32_t>(y_factor * img_h)};
 }
 void Renderer2D::inc_debug_lines()
 {

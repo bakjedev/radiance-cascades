@@ -95,7 +95,7 @@ void Device::find_queue_families()
 
   constexpr vk::QueueFlags required = vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute;
 
-  for (size_t idx = 0; idx < queue_families.size(); idx++) {
+  for (uint32_t idx = 0; idx < static_cast<uint32_t>(queue_families.size()); idx++) {
     if ((queue_families.at(idx).queueFlags & required) != required) continue;
 
     if (physical_device_.getSurfaceSupportKHR(static_cast<uint32_t>(idx), surface_.get()) == 0U) continue;

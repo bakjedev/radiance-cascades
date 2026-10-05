@@ -4,10 +4,9 @@
 #include "input.hpp"
 #include "render2d/renderer_2d.hpp"
 #include "resource/resource_manager.hpp"
+#include "resource/types/shader_resource.hpp"
 #include "sdl_init.hpp"
 #include "window.hpp"
-
-struct ShaderResource;
 
 class Application {
 public:
