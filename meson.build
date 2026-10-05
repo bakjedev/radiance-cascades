@@ -66,7 +66,7 @@ foreach shader : shaders
         shader + '.spv',
         input : 'assets/shaders' / shader,
         output : shader + '.spv',
-        command : [glslc, '@INPUT@', '-o', '@OUTPUT@'],
+        command : [glslc, '@INPUT@', '-g', '-o', '@OUTPUT@'],
         build_by_default : true,
     )
 endforeach
