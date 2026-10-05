@@ -21,7 +21,7 @@ add_project_arguments('-DVULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1', language : 'cpp'
 framework_dep = dependency('framework')
 
 vulkan_dep = dependency('vulkan', include_type : 'system')
-sdl3_dep = dependency('sdl3')
+sdl3_dep = dependency('sdl3', include_type : 'system')
 vma_dep = dependency('VulkanMemoryAllocator', include_type : 'system')
 
 sources = files(
