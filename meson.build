@@ -43,21 +43,19 @@ sources = files(
     'src/render2d/backend/frame.cpp',
 )
 
-glslc = find_program('glslc')
+slangc = find_program('slangc')
 
 shaders = [
-    'draw.comp',
-    'convert.comp',
-    'jfa.comp',
-    'sdf.comp',
-    'cascades.comp',
-    'gen_debug.comp',
-    'debug.vert',
-    'debug.frag',
-    'merge.comp',
-    'composite.comp',
-    'blit.vert',
-    'blit.frag',
+    'draw.slang',
+    'convert.slang',
+    'jfa.slang',
+    'sdf.slang',
+    'cascades.slang',
+    'gen_debug.slang',
+    'debug.slang',
+    'merge.slang',
+    'composite.slang',
+    'blit.slang'
 ]
 
 compiled_shaders = []
@@ -66,7 +64,7 @@ foreach shader : shaders
         shader + '.spv',
         input : 'assets/shaders' / shader,
         output : shader + '.spv',
-        command : [glslc, '@INPUT@', '-g', '-o', '@OUTPUT@'],
+        command : [slangc, '@INPUT@', '-target', 'spirv', '-g', '-o', '@OUTPUT@'],
         build_by_default : true,
     )
 endforeach

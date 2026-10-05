@@ -113,8 +113,7 @@ private:
   vk::UniquePipeline gen_debug_pipeline_;
 
   vk::UniquePipelineLayout debug_pipeline_layout_;
-  vk::UniqueShaderModule debug_vert_shader_module_;
-  vk::UniqueShaderModule debug_frag_shader_module_;
+  vk::UniqueShaderModule debug_shader_module_;
   vk::UniquePipeline debug_pipeline_;
 
   vk::UniquePipelineLayout merge_pipeline_layout_;
@@ -126,8 +125,7 @@ private:
   vk::UniquePipeline composite_pipeline_;
 
   vk::UniquePipelineLayout blit_pipeline_layout_;
-  vk::UniqueShaderModule blit_vert_shader_module_;
-  vk::UniqueShaderModule blit_frag_shader_module_;
+  vk::UniqueShaderModule blit_shader_module_;
   vk::UniquePipeline blit_pipeline_;
 
   vk::UniqueDescriptorPool descriptor_pool_;

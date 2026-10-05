@@ -193,7 +193,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant)};
 
     auto draw_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("draw.comp.spv", ShaderResourceLoader{&file_system_});
+        resource_manager_.create_from_file<ShaderResource>("draw.slang.spv", ShaderResourceLoader{&file_system_});
 
     draw_shader_module_ = create_shader_module(device_.get(), draw_shader_resource->code);
 
@@ -212,7 +212,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     vk::PushConstantRange convert_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(ConvertPushConstant)};
 
     auto convert_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("convert.comp.spv", ShaderResourceLoader{&file_system_});
+        resource_manager_.create_from_file<ShaderResource>("convert.slang.spv", ShaderResourceLoader{&file_system_});
 
     convert_shader_module_ = create_shader_module(device_.get(), convert_shader_resource->code);
 
@@ -231,7 +231,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     vk::PushConstantRange jfa_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant)};
 
     auto jfa_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("jfa.comp.spv", ShaderResourceLoader{&file_system_});
+        resource_manager_.create_from_file<ShaderResource>("jfa.slang.spv", ShaderResourceLoader{&file_system_});
 
     jfa_shader_module_ = create_shader_module(device_.get(), jfa_shader_resource->code);
 
@@ -250,7 +250,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     vk::PushConstantRange sdf_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant)};
 
     auto sdf_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("sdf.comp.spv", ShaderResourceLoader{&file_system_});
+        resource_manager_.create_from_file<ShaderResource>("sdf.slang.spv", ShaderResourceLoader{&file_system_});
 
     sdf_shader_module_ = create_shader_module(device_.get(), sdf_shader_resource->code);
 
@@ -269,7 +269,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     vk::PushConstantRange cascades_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CascadesPushConstant)};
 
     auto cascades_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("cascades.comp.spv", ShaderResourceLoader{&file_system_});
+        resource_manager_.create_from_file<ShaderResource>("cascades.slang.spv", ShaderResourceLoader{&file_system_});
 
     cascades_shader_module_ = create_shader_module(device_.get(), cascades_shader_resource->code);
 
@@ -288,7 +288,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     vk::PushConstantRange gen_debug_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(GenDebugPushConstant)};
 
     auto gen_debug_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("gen_debug.comp.spv", ShaderResourceLoader{&file_system_});
+        resource_manager_.create_from_file<ShaderResource>("gen_debug.slang.spv", ShaderResourceLoader{&file_system_});
 
     gen_debug_shader_module_ = create_shader_module(device_.get(), gen_debug_shader_resource->code);
 
@@ -304,20 +304,17 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
 
   // Render debug lines pipeline
   {
-    auto debug_vert_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("debug.vert.spv", ShaderResourceLoader{&file_system_});
-    auto debug_frag_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("debug.frag.spv", ShaderResourceLoader{&file_system_});
+    auto debug_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("debug.slang.spv", ShaderResourceLoader{&file_system_});
 
-    debug_vert_shader_module_ = create_shader_module(device_.get(), debug_vert_shader_resource->code);
-    debug_frag_shader_module_ = create_shader_module(device_.get(), debug_frag_shader_resource->code);
+    debug_shader_module_ = create_shader_module(device_.get(), debug_shader_resource->code);
 
     debug_pipeline_layout_ = create_pipeline_layout(device_.get(), {}, {});
 
     GraphicsPipelineDesc debug_pipeline_desc{};
-    debug_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, debug_vert_shader_module_.get(), "main",
+    debug_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, debug_shader_module_.get(), "vs_main",
                                             &specialization_info);
-    debug_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eFragment, debug_frag_shader_module_.get());
+    debug_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eFragment, debug_shader_module_.get(), "fs_main");
 
     debug_pipeline_desc.vertex_bindings.emplace_back(0, 32);
 
@@ -345,7 +342,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     vk::PushConstantRange merge_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(MergePushConstant)};
 
     auto merge_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("merge.comp.spv", ShaderResourceLoader{&file_system_});
+        resource_manager_.create_from_file<ShaderResource>("merge.slang.spv", ShaderResourceLoader{&file_system_});
 
     merge_shader_module_ = create_shader_module(device_.get(), merge_shader_resource->code);
 
@@ -364,7 +361,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
 
     auto composite_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("composite.comp.spv", ShaderResourceLoader{&file_system_});
+        resource_manager_.create_from_file<ShaderResource>("composite.slang.spv", ShaderResourceLoader{&file_system_});
 
     composite_shader_module_ = create_shader_module(device_.get(), composite_shader_resource->code);
 
@@ -382,20 +379,17 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange blit_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant)};
 
-    auto blit_vert_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("blit.vert.spv", ShaderResourceLoader{&file_system_});
-    auto blit_frag_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("blit.frag.spv", ShaderResourceLoader{&file_system_});
+    auto blit_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("blit.slang.spv", ShaderResourceLoader{&file_system_});
 
-    blit_vert_shader_module_ = create_shader_module(device_.get(), blit_vert_shader_resource->code);
-    blit_frag_shader_module_ = create_shader_module(device_.get(), blit_frag_shader_resource->code);
+    blit_shader_module_ = create_shader_module(device_.get(), blit_shader_resource->code);
 
     blit_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&blit_push, 1});
 
     GraphicsPipelineDesc blit_pipeline_desc{};
-    blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, blit_vert_shader_module_.get());
-    blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eFragment, blit_frag_shader_module_.get());
+    blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, blit_shader_module_.get(), "vs_main");
+    blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eFragment, blit_shader_module_.get(), "fs_main");
 
     blit_pipeline_desc.depth_stencil.depthTestEnable = vk::False;
     blit_pipeline_desc.depth_stencil.depthWriteEnable = vk::False;
