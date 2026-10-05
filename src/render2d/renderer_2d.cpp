@@ -98,7 +98,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     window_(window), event_dispatcher_(event_dispatcher), resource_manager_(resource_manager),
     file_system_(file_system), device_(instance_.get(), create_surface(window, instance_)),
     swapchain_(device_, {window.width(), window.height()}, vk::ImageUsageFlagBits::eColorAttachment),
-    fwrk_allocator_(device_.get_allocator()), context_(device_.get(), frames_in_flight, fwrk_allocator_)
+    fwrk_allocator_(device_.get_allocator()),
+    context_(instance_.get(), device_.get(), frames_in_flight, fwrk_allocator_, true)
 {
   for (Frame& frame: frames_) {
     create_frame(frame, device_);
