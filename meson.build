@@ -22,7 +22,11 @@ framework_dep = dependency('framework')
 
 vulkan_dep = dependency('vulkan', include_type : 'system')
 sdl3_dep = dependency('sdl3', include_type : 'system', default_options : ['werror=false', 'warning_level=0'])
-vma_dep = dependency('VulkanMemoryAllocator', include_type : 'system', default_options : ['werror=false', 'warning_level=0'])
+vma_dep = dependency('VulkanMemoryAllocator', include_type : 'system')
+
+if compiler.get_argument_syntax() == 'msvc'
+    add_project_arguments('/external:anglebrackets', '/external:W0', language : 'cpp')
+endif
 
 sources = files(
     'src/main.cpp',
