@@ -20,7 +20,7 @@ constexpr uint32_t frames_in_flight = 2;
 
 struct Renderer2DConfig {
   struct DrawConfig {
-    uint32_t size{25};
+    uint32_t size{50};
   } drawing;
 
   struct SceneSize {

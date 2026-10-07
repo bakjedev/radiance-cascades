@@ -17,8 +17,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     uint drawn = storageImagesU[0].Load(local).x;
 
     if (drawn >= 1) {
-        storageImagesI[pc.jfa_id].Store(local, int4(local, 0, 0));
+        storageImagesI[pc.jfa_id].Store(local, int4(local, -1, -1));
         return;
     }
-    storageImagesI[pc.jfa_id].Store(local, int4(-1, -1, 0, 0));
+    storageImagesI[pc.jfa_id].Store(local, int4(-1, -1, local));
 }

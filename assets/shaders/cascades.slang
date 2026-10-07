@@ -20,7 +20,8 @@ struct PushConstant {
 [[vk::binding(0, 0)]] RWTexture2DArray<float4> storageImageArraysF[];
 
 struct Material {
-    float3 color;
+    float3 base_color;
+    float3 radiance;
 }
 
 [[vk::binding(1, 0)]] StructuredBuffer<Material> storageBuffers[];
@@ -61,7 +62,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
         if (t > end_t) break;
     }
 
-    float3 radiance = hit ? storageBuffers[0][hit_mat].color : float3(0.0);
-    float alpha = hit ? 0.0 : 1.0;
+
+    float3 radiance = 0.0;
+    float alpha = 1.0;
+    if (hit) {
+        radiance = storageBuffers[0][hit_mat].radiance;
+        alpha = 0.0;
+    }
     storageImageArraysF[pc.cascades_id].Store(int3(local, pc.cascade), float4(radiance, alpha));
 }

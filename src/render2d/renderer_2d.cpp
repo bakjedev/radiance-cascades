@@ -53,6 +53,8 @@ namespace {
   struct Material {
     float color[3];
     float padding{};
+    float radiance[3];
+    float paddington{};
   };
 
   struct DebugLineVertex {
@@ -84,6 +86,8 @@ namespace {
   struct CompositePushConstant {
     uint32_t cascade_id;
     uint32_t composite_id;
+    uint32_t sdf_id;
+    uint32_t jfa_id;
     float spacing;
     uint32_t probe_size;
   };
@@ -130,8 +134,10 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                .set_size(sizeof(Material) * 256)
                                .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
 
-  std::vector materials = {Material{}, Material{.color = {0.0f, 1.0f, 0.0f}}, Material{.color = {0.0f, 0.0f, 0.0f}},
-                           Material{.color = {0.0f, 1.0f, 1.0f}}};
+  std::vector materials = {Material{.color = {1.0, 1.0, 1.0}, .radiance = {0.0, 0.0, 0.0}},
+                           Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {2.0f, 2.0f, 2.0f}},
+                           Material{.color = {1.0f, 1.0f, 0.0f}, .radiance = {1.5f, 1.5f, 0.0f}},
+                           Material{.color = {0.0f, 0.0f, 0.0f}, .radiance = {0.0f, 0.0f, 0.0f}}};
   void* material_data;
   vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
   memcpy(material_data, materials.data(), sizeof(Material) * materials.size());
@@ -539,7 +545,7 @@ void Renderer2D::compile()
   fwrk::ImageCreateInfo create_info{
       .type = VK_IMAGE_TYPE_2D,
       .size = {.width = config_.scene_size.width, .height = config_.scene_size.height, .depth = 1},
-      .format = VK_FORMAT_R32G32_SINT,
+      .format = VK_FORMAT_R32G32B32A32_SINT,
       .flags = {},
       .mips = 1,
       .layers = 1,
@@ -960,10 +966,14 @@ void Renderer2D::composite_pass(vk::CommandBuffer cmd, const float spacing, cons
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout_.get(), 0, 1,
                          &bindless_descriptor_set_, 0, nullptr);
 
-  const CompositePushConstant push_constant{.cascade_id = 7 + current_frame_,
-                                            .composite_id = 9 + current_frame_,
-                                            .spacing = spacing,
-                                            .probe_size = probe_size};
+  const CompositePushConstant push_constant{
+      .cascade_id = 7 + current_frame_,
+      .composite_id = 9 + current_frame_,
+      .sdf_id = 5 + current_frame_,
+      .jfa_id = (1 + current_frame_) * 2,
+      .spacing = spacing,
+      .probe_size = probe_size,
+  };
 
   cmd.pushConstants(composite_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
                     sizeof(CompositePushConstant), &push_constant);
