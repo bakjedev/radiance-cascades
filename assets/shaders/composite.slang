@@ -24,7 +24,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     int2 local = int2(dispatchThreadID.xy);
     if (any(local >= int2(img_width, img_height))) return;
 
-    float2 base_coord = (float2(local) / pc.spacing) - float2(0.5);
+    float2 base_coord = ((float2(local) + 0.5) / pc.spacing) - float2(0.5);
     int2 base_index = int2(floor(base_coord));
     float2 ratio = base_coord - float2(base_index);
 
