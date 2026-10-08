@@ -34,10 +34,6 @@ struct Renderer2DConfig {
     float base_interval{90.0f};
     float base_length{0.8f};
   } cascades;
-
-  struct DebugLinesConfig {
-    uint32_t max_debug_lines{1048576};
-  } debug_lines;
 };
 
 class Renderer2D {
@@ -49,8 +45,6 @@ public:
   void render();
 
   void plot(const std::pair<float, float>& pos, uint8_t material);
-  void inc_debug_lines();
-  void dec_debug_lines();
 
 private:
   bool begin_frame();
@@ -65,11 +59,6 @@ private:
   void sdf_pass(vk::CommandBuffer cmd);
   void cascades_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
                      float base_probe_spacing, uint32_t base_probe_dir_count, float base_probe_length);
-  void generate_debug_lines_pass(vk::CommandBuffer cmd, fwrk::ResourceID debug_line_vertex, uint32_t cascade_width,
-                                 uint32_t cascade_height, uint32_t probe_size, float spacing, uint32_t probe_dir_count,
-                                 float length);
-  void debug_lines_pass(vk::CommandBuffer cmd, fwrk::ResourceID debug_lines_vertex, uint32_t cascade_width,
-                        uint32_t cascade_height);
   void merge_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
                   fwrk::ResourceID cascades);
   void composite_pass(vk::CommandBuffer cmd, float spacing, uint32_t probe_size);
@@ -108,14 +97,6 @@ private:
   vk::UniqueShaderModule cascades_shader_module_;
   vk::UniquePipeline cascades_pipeline_;
 
-  vk::UniquePipelineLayout gen_debug_pipeline_layout_;
-  vk::UniqueShaderModule gen_debug_shader_module_;
-  vk::UniquePipeline gen_debug_pipeline_;
-
-  vk::UniquePipelineLayout debug_pipeline_layout_;
-  vk::UniqueShaderModule debug_shader_module_;
-  vk::UniquePipeline debug_pipeline_;
-
   vk::UniquePipelineLayout merge_pipeline_layout_;
   vk::UniqueShaderModule merge_shader_module_;
   vk::UniquePipeline merge_pipeline_;
@@ -151,7 +132,6 @@ private:
 
   uint8_t draw_material_ = 0;
   std::pair<uint32_t, uint32_t> draw_pos_;
-  uint32_t debug_line_level = 0;
 
   void import_resources();
 

@@ -57,24 +57,6 @@ namespace {
     float paddington{};
   };
 
-  struct DebugLineVertex {
-    float color[3]{};
-    float padding{};
-    float pos[2]{};
-  };
-
-  struct GenDebugPushConstant {
-    uint32_t vertex_id;
-    uint32_t cascade_id;
-    uint32_t cascade;
-    uint32_t cascade_width;
-    uint32_t cascade_height;
-    uint32_t base_probe_size;
-    float base_spacing;
-    uint32_t base_probe_dir_count;
-    float base_length;
-  };
-
   struct MergePushConstant {
     uint32_t cascade_id;
     uint32_t cascade;
@@ -137,7 +119,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   std::vector materials = {Material{.color = {1.0, 1.0, 1.0}, .radiance = {0.0, 0.0, 0.0}},
                            Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {2.0f, 2.0f, 2.0f}},
                            Material{.color = {1.0f, 1.0f, 0.0f}, .radiance = {1.5f, 1.5f, 0.0f}},
-                           Material{.color = {0.0f, 0.0f, 0.0f}, .radiance = {0.0f, 0.0f, 0.0f}}};
+                           Material{.color = {0.8f, 0.8f, 0.8f}, .radiance = {0.0f, 0.0f, 0.0f}}};
   void* material_data;
   vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
   memcpy(material_data, materials.data(), sizeof(Material) * materials.size());
@@ -290,60 +272,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     cascades_pipeline_ = create_compute_pipeline(device_.get(), cascades_pipeline_desc);
   }
 
-  // Generate debug lines pipeline
-  {
-    vk::PushConstantRange gen_debug_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(GenDebugPushConstant)};
-
-    auto gen_debug_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("gen_debug.slang.spv", ShaderResourceLoader{&file_system_});
-
-    gen_debug_shader_module_ = create_shader_module(device_.get(), gen_debug_shader_resource->code);
-
-    gen_debug_pipeline_layout_ =
-        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&gen_debug_push, 1});
-
-    const ComputePipelineDesc gen_debug_pipeline_desc{.module = gen_debug_shader_module_.get(),
-                                                      .specialization = &specialization_info,
-                                                      .layout = gen_debug_pipeline_layout_.get()};
-
-    gen_debug_pipeline_ = create_compute_pipeline(device_.get(), gen_debug_pipeline_desc);
-  }
-
-  // Render debug lines pipeline
-  {
-    auto debug_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("debug.slang.spv", ShaderResourceLoader{&file_system_});
-
-    debug_shader_module_ = create_shader_module(device_.get(), debug_shader_resource->code);
-
-    debug_pipeline_layout_ = create_pipeline_layout(device_.get(), {}, {});
-
-    GraphicsPipelineDesc debug_pipeline_desc{};
-    debug_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, debug_shader_module_.get(), "vs_main",
-                                            &specialization_info);
-    debug_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eFragment, debug_shader_module_.get(), "fs_main");
-
-    debug_pipeline_desc.vertex_bindings.emplace_back(0, 32);
-
-    debug_pipeline_desc.vertex_attributes.emplace_back(0, 0, vk::Format::eR32G32B32Sfloat,
-                                                       static_cast<uint32_t>(offsetof(DebugLineVertex, color)));
-    debug_pipeline_desc.vertex_attributes.emplace_back(1, 0, vk::Format::eR32G32Sfloat,
-                                                       static_cast<uint32_t>(offsetof(DebugLineVertex, pos)));
-
-    debug_pipeline_desc.input_assembly.topology = vk::PrimitiveTopology::eLineList;
-
-    debug_pipeline_desc.rasterization.lineWidth = 0.5;
-
-    debug_pipeline_desc.depth_stencil.depthTestEnable = vk::False;
-    debug_pipeline_desc.depth_stencil.depthWriteEnable = vk::False;
-
-    debug_pipeline_desc.add_attachment(swapchain_.format());
-
-    debug_pipeline_desc.layout = debug_pipeline_layout_.get();
-
-    debug_pipeline_ = create_graphics_pipeline(device_.get(), debug_pipeline_desc);
-  }
-
   // Merge pipeline
   {
     vk::PushConstantRange merge_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(MergePushConstant)};
@@ -452,17 +380,6 @@ void Renderer2D::plot(const std::pair<float, float>& pos, const uint8_t material
 
   draw_material_ = material;
   draw_pos_ = {static_cast<uint32_t>(x_factor * img_w), static_cast<uint32_t>(y_factor * img_h)};
-}
-void Renderer2D::inc_debug_lines()
-{
-  if (debug_line_level > config_.cascades.cascades) return;
-  debug_line_level++;
-}
-
-void Renderer2D::dec_debug_lines()
-{
-  if (debug_line_level == 0) return;
-  debug_line_level--;
 }
 
 bool Renderer2D::begin_frame()
@@ -583,13 +500,6 @@ void Renderer2D::compile()
   const auto base_probe_spacing = config_.cascades.base_spacing;
   const auto base_probe_length = config_.cascades.base_length;
 
-  const fwrk::BufferCreateInfo debug_create_info{
-      .size = sizeof(DebugLineVertex) * config_.debug_lines.max_debug_lines * 2,
-      .flags = {},
-      .usage = VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT |
-               VK_BUFFER_USAGE_2_TRANSFER_DST_BIT};
-  const fwrk::ResourceID debug_lines_vertex = graph.create_buffer(debug_create_info);
-
   // ------------------
   // Passes
   // ------------------
@@ -643,24 +553,6 @@ void Renderer2D::compile()
                              .clear_value = {.r = 0.0f, .g = 0.0f, .b = 0.0f, .a = 0.0}})
       .set_execute([this](vk::CommandBuffer cmd) { blit_pass(cmd); });
 
-  graph.add_compute_pass("Generate Debug Lines")
-      .set_storage_buffer_write({.resource = {.id = debug_lines_vertex}})
-      .set_storage_image_read({.resource = {.id = cascades}})
-      .set_execute([this, debug_lines_vertex, cascade_width, cascade_height, probe_size, base_probe_spacing,
-                    base_probe_dir_count, base_probe_length](vk::CommandBuffer cmd) {
-        generate_debug_lines_pass(cmd, debug_lines_vertex, cascade_width, cascade_height, probe_size,
-                                  base_probe_spacing, base_probe_dir_count, base_probe_length);
-      });
-
-  graph.add_graphics_pass("Debug lines")
-      .set_color_attachment(
-          {.resource = {.id = swapchain_proxy_}, .load_op = fwrk::LoadOp::Load, .store_op = fwrk::StoreOp::Store})
-      .set_vertex_buffer_input(
-          {.resource = {.id = debug_lines_vertex}, .stages = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT})
-      .set_execute([this, debug_lines_vertex, cascade_width, cascade_height](vk::CommandBuffer cmd) {
-        debug_lines_pass(cmd, debug_lines_vertex, cascade_width, cascade_height);
-      });
-
   graph.set_image_end_state(swapchain_proxy_,
                             {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
 
@@ -693,8 +585,6 @@ void Renderer2D::compile()
                  vk::ImageLayout::eGeneral)
       .add_image(0, 8, vk::DescriptorType::eStorageImage, context_.acquire_image_view(cascades, array_view_key, 1),
                  vk::ImageLayout::eGeneral)
-      .add_buffer(1, 1, vk::DescriptorType::eStorageBuffer, context_.get_raw_buffer(debug_lines_vertex, 0))
-      .add_buffer(1, 2, vk::DescriptorType::eStorageBuffer, context_.get_raw_buffer(debug_lines_vertex, 1))
       .add_image(0, 9, vk::DescriptorType::eStorageImage, context_.acquire_image_view(composite, view_key, 0),
                  vk::ImageLayout::eGeneral)
       .add_image(0, 10, vk::DescriptorType::eStorageImage, context_.acquire_image_view(composite, view_key, 1),
@@ -835,88 +725,6 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const uint32_t cascade_wid
 
     cmd.dispatch(gx, gy, 1);
   }
-}
-
-void Renderer2D::generate_debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID debug_line_vertex,
-                                           const uint32_t cascade_width, const uint32_t cascade_height,
-                                           const uint32_t probe_size, const float spacing,
-                                           const uint32_t probe_dir_count, const float length)
-{
-  cmd.fillBuffer(context_.get_raw_buffer(debug_line_vertex), {}, vk::WholeSize, 0);
-
-  auto barrier = vk::BufferMemoryBarrier2{}
-                     .setSrcStageMask(vk::PipelineStageFlagBits2::eTransfer)
-                     .setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite)
-                     .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
-                     .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
-                     .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
-                     .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
-                     .setBuffer(context_.get_raw_buffer(debug_line_vertex))
-                     .setSize(vk::WholeSize)
-                     .setOffset(0);
-  cmd.pipelineBarrier2(vk::DependencyInfo{}.setBufferMemoryBarriers(barrier));
-
-  if (debug_line_level == 0) return;
-  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, gen_debug_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, gen_debug_pipeline_layout_.get(), 0, 1,
-                         &bindless_descriptor_set_, 0, nullptr);
-
-  const uint32_t gx = (cascade_width + 7) / 8;
-  const uint32_t gy = (cascade_height + 7) / 8;
-
-  GenDebugPushConstant push_constant{.vertex_id = 1 + current_frame_,
-                                     .cascade_id = 7 + current_frame_,
-                                     .cascade = 0,
-                                     .cascade_width = cascade_width,
-                                     .cascade_height = cascade_height,
-                                     .base_probe_size = probe_size,
-                                     .base_spacing = spacing,
-                                     .base_probe_dir_count = probe_dir_count,
-                                     .base_length = length};
-
-  const bool show_all = debug_line_level > config_.cascades.cascades;
-  for (uint32_t i = show_all ? 0 : debug_line_level - 1; i < (show_all ? config_.cascades.cascades : debug_line_level);
-       i++) {
-    push_constant.cascade = i;
-    cmd.pushConstants(gen_debug_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
-                      sizeof(GenDebugPushConstant), &push_constant);
-
-    cmd.dispatch(gx, gy, 1);
-  }
-}
-
-void Renderer2D::debug_lines_pass(vk::CommandBuffer cmd, const fwrk::ResourceID debug_lines_vertex,
-                                  const uint32_t cascade_width, const uint32_t cascade_height)
-{
-  cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, debug_pipeline_.get());
-  constexpr vk::DeviceSize offset = 0;
-  const auto vertex_buffer = vk::Buffer{context_.get_raw_buffer(debug_lines_vertex)};
-  cmd.bindVertexBuffers(0, 1, &vertex_buffer, &offset);
-
-  const auto swp_w = static_cast<float>(swapchain_.extent().width);
-  const auto swp_h = static_cast<float>(swapchain_.extent().height);
-  const auto img_w = static_cast<float>(config_.scene_size.width);
-  const auto img_h = static_cast<float>(config_.scene_size.height);
-
-  const float scale = std::min(swp_w / img_w, swp_h / img_h);
-
-  const float dst_w = img_w * scale;
-  const float dst_h = img_h * scale;
-
-  const float dst_off_x = (swp_w - dst_w) / 2;
-  const float dst_off_y = (swp_h - dst_h) / 2;
-
-  const vk::Viewport viewport{dst_off_x, dst_off_y, dst_w, dst_h};
-  cmd.setViewport(0, 1, &viewport);
-
-  const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{swapchain_.extent().width, swapchain_.extent().height}};
-  cmd.setScissor(0, 1, &scissor);
-
-  const bool show_all = debug_line_level > config_.cascades.cascades;
-  const uint32_t cascade_count = cascade_width * cascade_height;
-  const uint32_t vertex_count = cascade_count * 2 * (show_all ? config_.cascades.cascades : 1);
-
-  cmd.draw(vertex_count, 1, show_all ? 0 : cascade_count * 2 * (debug_line_level - 1), 0);
 }
 
 void Renderer2D::merge_pass(vk::CommandBuffer cmd, const uint32_t cascade_width, const uint32_t cascade_height,
