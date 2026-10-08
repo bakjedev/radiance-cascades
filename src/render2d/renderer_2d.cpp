@@ -99,14 +99,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   });
 
   // ----------------------------------------
-  // Images and Buffers
+  // Buffers
   // ----------------------------------------
-  scene_image_.emplace(device_.get_allocator(), ImageDesc{}
-                                                    .set_extent(config_.scene_size.width, config_.scene_size.height)
-                                                    .set_format(vk::Format::eR8Uint)
-                                                    .set_usage(vk::ImageUsageFlagBits::eStorage));
-  scene_image_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
-
   material_buffer_.emplace(device_.get_allocator(),
                            BufferDesc{.alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}
                                .set_size(sizeof(Material) * 256)
@@ -169,7 +163,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   }
 
   DescriptorWriter{}
-      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
       .add_buffer(1, 0, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
       .add_image(3, 0, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, ubo_->buffer())
@@ -942,6 +935,10 @@ void Renderer2D::create_scene_image()
   } else {
     scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
   }
+
+  DescriptorWriter{}
+      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
+      .update(device_.get(), bindless_descriptor_set_);
 
   void* ubo_data;
   vmaMapMemory(device_.get_allocator(), ubo_->allocation(), &ubo_data);
