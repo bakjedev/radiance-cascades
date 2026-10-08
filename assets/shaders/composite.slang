@@ -1,5 +1,4 @@
-[vk::constant_id(0)] const uint img_width = 0;
-[vk::constant_id(1)] const uint img_height = 0;
+#include "common.slang"
 
 struct PushConstant {
     uint cascades_id;
@@ -15,12 +14,8 @@ struct PushConstant {
 [[vk::binding(0, 0)]] RWTexture2D<uint4> storageImagesU[];
 [[vk::binding(0, 0)]] RWTexture2D<int4> storageImagesI[];
 
-struct Material {
-    float3 base_color;
-    float3 radiance;
-}
-
 [[vk::binding(1, 0)]] StructuredBuffer<Material> storageBuffers[];
+[[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
 static const int2 probe_offsets[] = {
     int2(0, 0),
@@ -68,7 +63,8 @@ float3 irradiance(float2 pos, PushConstant pc) {
 [numthreads(8, 8)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc) {
     int2 local = int2(dispatchThreadID.xy);
-    if (any(local >= int2(img_width, img_height))) return;
+    UBO ubo = uniformBuffers[0];
+    if (any(local >= int2(ubo.scene_width, ubo.scene_height))) return;
     uint8_t mat_id = uint8_t(storageImagesU[0].Load(local).x);
     Material material = storageBuffers[0][mat_id];
 

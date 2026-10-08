@@ -29,7 +29,7 @@ struct Renderer2DConfig {
   } scene_size;
 
   struct CascadesConfig {
-    uint32_t cascades{5};
+    uint32_t cascades{6};
     float base_spacing{1.0f};
     float base_interval{90.0f};
     float base_length{0.8f};
@@ -127,6 +127,7 @@ private:
   vk::UniqueImageView scene_image_view_;
 
   std::optional<Buffer> material_buffer_;
+  std::optional<Buffer> ubo_;
 
   uint32_t current_frame_{};
   uint32_t image_index_{};
@@ -139,7 +140,7 @@ private:
   bool should_compile_ = true;
 
   std::vector<Material> materials_;
-  uint8_t draw_material_ = 0;
+  uint8_t draw_material_ = 1;
   bool should_draw = false;
   std::pair<uint32_t, uint32_t> draw_pos_;
 

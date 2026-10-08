@@ -1,5 +1,4 @@
-[vk::constant_id(0)] const uint img_width = 0;
-[vk::constant_id(1)] const uint img_height = 0;
+#include "common.slang"
 
 struct PushConstant {
     uint jfa_id;
@@ -7,12 +6,14 @@ struct PushConstant {
 
 [[vk::binding(0, 0)]] RWTexture2D<int4> storageImagesI[];
 [[vk::binding(0, 0)]] RWTexture2D<uint4> storageImagesU[];
+[[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
 [shader("compute")]
 [numthreads(8, 8)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc) {
     int2 local = int2(dispatchThreadID.xy);
-    if (any(local >= int2(img_width, img_height))) return;
+    UBO ubo = uniformBuffers[0];
+    if (any(local >= int2(ubo.scene_width, ubo.scene_height))) return;
 
     uint drawn = storageImagesU[0].Load(local).x;
 

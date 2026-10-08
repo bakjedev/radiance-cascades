@@ -48,7 +48,7 @@ namespace {
     float base_length;
   };
 
-  struct SpecialData {
+  struct UBOData {
     uint32_t image_width;
     uint32_t image_height;
   };
@@ -116,11 +116,19 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   materials_.push_back(Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {2.0f, 2.0f, 2.0f}});
   materials_.push_back(Material{.color = {1.0f, 1.0f, 0.0f}, .radiance = {1.5f, 1.5f, 0.0f}});
   materials_.push_back(Material{.color = {0.8f, 0.8f, 0.8f}, .radiance = {0.0f, 0.0f, 0.0f}});
+  materials_.push_back(Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {1.0f, 0.1f, 0.1f}});
+  materials_.push_back(Material{.color = {0.0f, 0.0f, 1.0f}, .radiance = {0.0f, 0.0f, 0.0f}});
 
   void* material_data;
   vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
   memcpy(material_data, materials_.data(), sizeof(Material) * materials_.size());
   vmaUnmapMemory(device_.get_allocator(), material_buffer_->allocation());
+
+
+  ubo_.emplace(device_.get_allocator(),
+               BufferDesc{.alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}
+                   .set_size(sizeof(UBOData))
+                   .set_usage(vk::BufferUsageFlagBits::eUniformBuffer));
 
   // ----------------------------------------
   // Sampler
@@ -134,7 +142,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 100},
                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 100},
                    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 100},
-                   vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 100}};
+                   vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 100},
+                   vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 100}};
   descriptor_pool_ = create_descriptor_pool(device_.get(), sizes, 1);
 
   // Bindless
@@ -148,6 +157,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                            .add_binding(2, vk::DescriptorType::eSampledImage, vk::ShaderStageFlagBits::eAll,
                                         vk::DescriptorBindingFlagBits::ePartiallyBound, 100)
                            .add_binding(3, vk::DescriptorType::eSampler, vk::ShaderStageFlagBits::eAll,
+                                        vk::DescriptorBindingFlagBits::ePartiallyBound, 100)
+                           .add_binding(4, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eAll,
                                         vk::DescriptorBindingFlagBits::ePartiallyBound, 100));
 
     bindless_descriptor_set_ = device_.get()
@@ -161,6 +172,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
       .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
       .add_buffer(1, 0, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
       .add_image(3, 0, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
+      .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, ubo_->buffer())
       .update(device_.get(), bindless_descriptor_set_);
 
   // ----------------------------------------
@@ -193,13 +205,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // Pipelines
   // ----------------------------------------
 
-  SpecialData special_data{.image_width = config_.scene_size.width, .image_height = config_.scene_size.height};
-  std::array<vk::SpecializationMapEntry, 2> entries{{{0, offsetof(SpecialData, image_width), sizeof(uint32_t)},
-                                                     {1, offsetof(SpecialData, image_height), sizeof(uint32_t)}}};
-  vk::SpecializationInfo specialization_info{};
-  specialization_info.setMapEntries(entries);
-  specialization_info.setData<SpecialData>(special_data);
-
   // Draw pipeline
   {
     vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant)};
@@ -213,7 +218,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&draw_push, 1});
 
     const ComputePipelineDesc draw_pipeline_desc{.module = draw_shader_module_.get(),
-                                                 .specialization = &specialization_info,
                                                  .layout = draw_pipeline_layout_.get()};
 
     draw_pipeline_ = create_compute_pipeline(device_.get(), draw_pipeline_desc);
@@ -232,7 +236,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&convert_push, 1});
 
     const ComputePipelineDesc convert_pipeline_desc{.module = convert_shader_module_.get(),
-                                                    .specialization = &specialization_info,
                                                     .layout = convert_pipeline_layout_.get()};
 
     convert_pipeline_ = create_compute_pipeline(device_.get(), convert_pipeline_desc);
@@ -251,7 +254,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&jfa_push, 1});
 
     const ComputePipelineDesc jfa_pipeline_desc{.module = jfa_shader_module_.get(),
-                                                .specialization = &specialization_info,
                                                 .layout = jfa_pipeline_layout_.get()};
 
     jfa_pipeline_ = create_compute_pipeline(device_.get(), jfa_pipeline_desc);
@@ -270,7 +272,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&sdf_push, 1});
 
     const ComputePipelineDesc sdf_pipeline_desc{.module = sdf_shader_module_.get(),
-                                                .specialization = &specialization_info,
                                                 .layout = sdf_pipeline_layout_.get()};
 
     sdf_pipeline_ = create_compute_pipeline(device_.get(), sdf_pipeline_desc);
@@ -289,7 +290,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&cascades_push, 1});
 
     const ComputePipelineDesc cascades_pipeline_desc{.module = cascades_shader_module_.get(),
-                                                     .specialization = &specialization_info,
                                                      .layout = cascades_pipeline_layout_.get()};
 
     cascades_pipeline_ = create_compute_pipeline(device_.get(), cascades_pipeline_desc);
@@ -308,7 +308,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&merge_push, 1});
 
     const ComputePipelineDesc merge_pipeline_desc{.module = merge_shader_module_.get(),
-                                                  .specialization = &specialization_info,
                                                   .layout = merge_pipeline_layout_.get()};
 
     merge_pipeline_ = create_compute_pipeline(device_.get(), merge_pipeline_desc);
@@ -327,7 +326,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&composite_push, 1});
 
     const ComputePipelineDesc composite_pipeline_desc{.module = composite_shader_module_.get(),
-                                                      .specialization = &specialization_info,
                                                       .layout = composite_pipeline_layout_.get()};
 
     composite_pipeline_ = create_compute_pipeline(device_.get(), composite_pipeline_desc);
@@ -867,6 +865,8 @@ void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
 
+  ImGui::Begin("Config");
+
   constexpr uint32_t min_draw_size = 1;
   constexpr uint32_t max_draw_size = 100;
   ImGui::SliderScalar("Draw size", ImGuiDataType_U32, &config_.drawing.size, &min_draw_size, &max_draw_size);
@@ -899,6 +899,7 @@ void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
   if (ImGui::Button("Recompile framework")) {
     should_compile_ = true;
   }
+  ImGui::End();
 
   ImGui::Render();
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -941,6 +942,12 @@ void Renderer2D::create_scene_image()
   } else {
     scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
   }
+
+  void* ubo_data;
+  vmaMapMemory(device_.get_allocator(), ubo_->allocation(), &ubo_data);
+  const UBOData ubo{.image_width = config_.scene_size.width, .image_height = config_.scene_size.height};
+  memcpy(ubo_data, &ubo, sizeof(UBOData));
+  vmaUnmapMemory(device_.get_allocator(), ubo_->allocation());
 }
 
 VkSurfaceKHR Renderer2D::create_surface(const Window& window, const Instance& instance)

@@ -1,5 +1,4 @@
-[vk::constant_id(0)] const uint img_width = 0;
-[vk::constant_id(1)] const uint img_height = 0;
+#include "common.slang"
 
 struct PushConstant {
     int2 pos;
@@ -8,6 +7,7 @@ struct PushConstant {
 }
 
 [[vk::binding(0, 0)]] RWTexture2D<uint4> storageImagesU[];
+[[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
 [shader("compute")]
 [numthreads(8, 8)]
@@ -16,7 +16,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     if (any(local >= int2(pc.size))) return;
     int2 start = pc.pos - int2(pc.size / 2);
     int2 coord = start + local;
-    if (any(coord >= int2(img_width, img_height)) || any(coord < int2(0))) return;
+    UBO ubo = uniformBuffers[0];
+    if (any(coord >= int2(ubo.scene_width, ubo.scene_height)) || any(coord < int2(0))) return;
 
     float dist = length(float2(coord) - float2(pc.pos));
     float radius = float(pc.size) / 2.0;

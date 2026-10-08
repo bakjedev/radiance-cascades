@@ -1,7 +1,4 @@
-static const float PI = 3.14159265359;
-
-[vk::constant_id(0)] const uint img_width = 0;
-[vk::constant_id(1)] const uint img_height = 0;
+#include "common.slang"
 
 struct PushConstant {
     uint sdf_id;
@@ -19,18 +16,16 @@ struct PushConstant {
 [[vk::binding(0, 0)]] RWTexture2D<uint4> storageImagesU[];
 [[vk::binding(0, 0)]] RWTexture2DArray<float4> storageImageArraysF[];
 
-struct Material {
-    float3 base_color;
-    float3 radiance;
-}
-
 [[vk::binding(1, 0)]] StructuredBuffer<Material> storageBuffers[];
+[[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
 [shader("compute")]
 [numthreads(8, 8)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc) {
     int2 local = int2(dispatchThreadID.xy);
     if (any(local >= int2(pc.cascade_width, pc.cascade_height))) return;
+
+    UBO ubo = uniformBuffers[0];
 
     int probe_size = int(pc.base_probe_size) << pc.cascade;
     int2 probe = local / probe_size;
@@ -51,7 +46,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     for (int i = 0; i < 64; i++) {
         float2 point = origin + dir * t;
         int2 coord = int2(floor(point));
-        if (any(coord >= int2(img_width, img_height)) || any(coord < int2(0))) break;
+        if (any(coord >= int2(ubo.scene_width, ubo.scene_height)) || any(coord < int2(0))) break;
         float distance = storageImagesF[pc.sdf_id].Load(coord).x;
         if (distance < 0.1) {
             hit = true;
