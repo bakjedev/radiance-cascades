@@ -2,7 +2,7 @@
 
 #include <cmath>
 #include <iostream>
-#include "resource/types/shader_resource.hpp"
+#include "imgui_impl_sdl3.h"
 
 struct QuitEvent {};
 
@@ -34,11 +34,7 @@ void Application::run()
     }
 
     if (input_.mouse_down(MouseButton::Left)) {
-      renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 1);
-    } else if (input_.mouse_down(MouseButton::Right)) {
-      renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 2);
-    } else if (input_.mouse_down(MouseButton::Middle)) {
-      renderer_.plot({input_.mouse_x(), input_.mouse_y()}, 3);
+      renderer_.plot({input_.mouse_x(), input_.mouse_y()});
     }
 
     renderer_.render();
@@ -51,6 +47,8 @@ void Application::poll_events()
 {
   SDL_Event event;
   while (SDL_PollEvent(&event)) {
+    ImGui_ImplSDL3_ProcessEvent(&event);
+
     switch (event.type) {
       case SDL_EVENT_QUIT:
         event_dispatcher_.dispatch(QuitEvent{});

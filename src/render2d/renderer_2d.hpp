@@ -29,11 +29,18 @@ struct Renderer2DConfig {
   } scene_size;
 
   struct CascadesConfig {
-    uint32_t cascades{6};
+    uint32_t cascades{5};
     float base_spacing{1.0f};
     float base_interval{90.0f};
     float base_length{0.8f};
   } cascades;
+};
+
+struct Material {
+  float color[3];
+  float padding{};
+  float radiance[3];
+  float paddington{};
 };
 
 class Renderer2D {
@@ -44,7 +51,7 @@ public:
 
   void render();
 
-  void plot(const std::pair<float, float>& pos, uint8_t material);
+  void plot(const std::pair<float, float>& pos);
 
 private:
   bool begin_frame();
@@ -63,6 +70,7 @@ private:
                   fwrk::ResourceID cascades);
   void composite_pass(vk::CommandBuffer cmd, float spacing, uint32_t probe_size);
   void blit_pass(vk::CommandBuffer cmd);
+  void imgui_pass(vk::CommandBuffer cmd);
 
   Window& window_;
   EventDispatcher& event_dispatcher_;
@@ -130,10 +138,14 @@ private:
   fwrk::ResourceID scene_image_import_;
   bool should_compile_ = true;
 
+  std::vector<Material> materials_;
   uint8_t draw_material_ = 0;
+  bool should_draw = false;
   std::pair<uint32_t, uint32_t> draw_pos_;
 
   void import_resources();
+
+  void create_scene_image();
 
   static VkSurfaceKHR create_surface(const Window& window, const Instance& instance);
 };

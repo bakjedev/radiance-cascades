@@ -5,6 +5,9 @@
 
 #include "backend/descriptor.hpp"
 #include "backend/pipeline.hpp"
+#include "imgui.h"
+#include "imgui_impl_sdl3.h"
+#include "imgui_impl_vulkan.h"
 #include "src/event_dispatcher.hpp"
 #include "src/resource/resource_manager.hpp"
 #include "src/resource/types/shader_resource.hpp"
@@ -48,13 +51,6 @@ namespace {
   struct SpecialData {
     uint32_t image_width;
     uint32_t image_height;
-  };
-
-  struct Material {
-    float color[3];
-    float padding{};
-    float radiance[3];
-    float paddington{};
   };
 
   struct MergePushConstant {
@@ -116,13 +112,14 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                .set_size(sizeof(Material) * 256)
                                .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
 
-  std::vector materials = {Material{.color = {1.0, 1.0, 1.0}, .radiance = {0.0, 0.0, 0.0}},
-                           Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {2.0f, 2.0f, 2.0f}},
-                           Material{.color = {1.0f, 1.0f, 0.0f}, .radiance = {1.5f, 1.5f, 0.0f}},
-                           Material{.color = {0.8f, 0.8f, 0.8f}, .radiance = {0.0f, 0.0f, 0.0f}}};
+  materials_.push_back(Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {0.0f, 0.0f, 0.0f}});
+  materials_.push_back(Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {2.0f, 2.0f, 2.0f}});
+  materials_.push_back(Material{.color = {1.0f, 1.0f, 0.0f}, .radiance = {1.5f, 1.5f, 0.0f}});
+  materials_.push_back(Material{.color = {0.8f, 0.8f, 0.8f}, .radiance = {0.0f, 0.0f, 0.0f}});
+
   void* material_data;
   vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
-  memcpy(material_data, materials.data(), sizeof(Material) * materials.size());
+  memcpy(material_data, materials_.data(), sizeof(Material) * materials_.size());
   vmaUnmapMemory(device_.get_allocator(), material_buffer_->allocation());
 
   // ----------------------------------------
@@ -165,6 +162,32 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
       .add_buffer(1, 0, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
       .add_image(3, 0, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .update(device_.get(), bindless_descriptor_set_);
+
+  // ----------------------------------------
+  // ImGui
+  // ----------------------------------------
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGui_ImplSDL3_InitForVulkan(window_.get());
+
+  ImGui_ImplVulkan_InitInfo imgui_vulkan_info = {};
+  imgui_vulkan_info.ApiVersion = vk::ApiVersion13;
+  imgui_vulkan_info.Instance = instance_.get();
+  imgui_vulkan_info.PhysicalDevice = device_.get_physical();
+  imgui_vulkan_info.Device = device_.get();
+  imgui_vulkan_info.QueueFamily = device_.get_queue_family();
+  imgui_vulkan_info.Queue = device_.get_queue();
+  imgui_vulkan_info.DescriptorPoolSize = IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE;
+  imgui_vulkan_info.MinImageCount = 2;
+  imgui_vulkan_info.ImageCount = swapchain_.image_count();
+  imgui_vulkan_info.UseDynamicRendering = true;
+  imgui_vulkan_info.PipelineInfoMain.PipelineRenderingCreateInfo.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+  imgui_vulkan_info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+  std::array imgui_format{static_cast<VkFormat>(swapchain_.format())};
+  imgui_vulkan_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = imgui_format.data();
+
+  ImGui_ImplVulkan_Init(&imgui_vulkan_info);
 
   // ----------------------------------------
   // Pipelines
@@ -339,19 +362,19 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // ----------------------------------------
   // Imports
   // ----------------------------------------
-  fwrk::ImageImportInfo image_import_info{
-      .type = VK_IMAGE_TYPE_2D,
-      .size = {.width = config_.scene_size.width, .height = config_.scene_size.height, .depth = 1},
-      .format = VK_FORMAT_R8_UINT,
-      .state = fwrk::PhysicalState::Undefined};
-  scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
-  image_import_info.format = VK_FORMAT_R32G32_SINT;
+  create_scene_image();
 
   import_resources();
   swapchain_proxy_ = context_.create_proxy();
 }
 
-Renderer2D::~Renderer2D() { device_.get().waitIdle(); }
+Renderer2D::~Renderer2D()
+{
+  device_.get().waitIdle();
+  ImGui_ImplVulkan_Shutdown();
+  ImGui_ImplSDL3_Shutdown();
+  ImGui::DestroyContext();
+}
 
 void Renderer2D::render()
 {
@@ -360,7 +383,7 @@ void Renderer2D::render()
     end_frame();
   }
 }
-void Renderer2D::plot(const std::pair<float, float>& pos, const uint8_t material)
+void Renderer2D::plot(const std::pair<float, float>& pos)
 {
   const auto swp_w = swapchain_.extent().width;
   const auto swp_h = swapchain_.extent().height;
@@ -378,8 +401,8 @@ void Renderer2D::plot(const std::pair<float, float>& pos, const uint8_t material
   const float x_factor = (pos.first - static_cast<float>(dst_off_x)) / static_cast<float>(dst_w);
   const float y_factor = (pos.second - static_cast<float>(dst_off_y)) / static_cast<float>(dst_h);
 
-  draw_material_ = material;
   draw_pos_ = {static_cast<uint32_t>(x_factor * img_w), static_cast<uint32_t>(y_factor * img_h)};
+  should_draw = true;
 }
 
 bool Renderer2D::begin_frame()
@@ -456,6 +479,10 @@ void Renderer2D::compile()
 {
   fwrk::Graph& graph = context_.graph();
 
+  if (scene_image_->extent().width != config_.scene_size.width ||
+      scene_image_->extent().height != config_.scene_size.height) {
+    create_scene_image();
+  }
   // ------------------
   // Transients
   // ------------------
@@ -553,6 +580,14 @@ void Renderer2D::compile()
                              .clear_value = {.r = 0.0f, .g = 0.0f, .b = 0.0f, .a = 0.0}})
       .set_execute([this](vk::CommandBuffer cmd) { blit_pass(cmd); });
 
+  graph.add_graphics_pass("ImGui")
+      .set_color_attachment({
+          .resource = {.id = swapchain_proxy_},
+          .load_op = fwrk::LoadOp::Load,
+          .store_op = fwrk::StoreOp::Store,
+      })
+      .set_execute([this](vk::CommandBuffer cmd) { imgui_pass(cmd); });
+
   graph.set_image_end_state(swapchain_proxy_,
                             {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
 
@@ -598,7 +633,7 @@ void Renderer2D::compile()
 
 void Renderer2D::draw_pass(vk::CommandBuffer cmd)
 {
-  if (draw_material_ == 0) return;
+  if (!should_draw) return;
 
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, draw_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
@@ -613,7 +648,7 @@ void Renderer2D::draw_pass(vk::CommandBuffer cmd)
   const uint32_t gs = (config_.drawing.size + 7) / 8;
   cmd.dispatch(gs, gs, 1);
 
-  draw_material_ = 0;
+  should_draw = false;
 }
 
 void Renderer2D::convert_pass(vk::CommandBuffer cmd)
@@ -826,6 +861,49 @@ void Renderer2D::blit_pass(vk::CommandBuffer cmd)
   cmd.draw(3, 1, 0, 0);
 }
 
+void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
+{
+  ImGui_ImplVulkan_NewFrame();
+  ImGui_ImplSDL3_NewFrame();
+  ImGui::NewFrame();
+
+  constexpr uint32_t min_draw_size = 1;
+  constexpr uint32_t max_draw_size = 100;
+  ImGui::SliderScalar("Draw size", ImGuiDataType_U32, &config_.drawing.size, &min_draw_size, &max_draw_size);
+
+  ImGui::Text("Scene size");
+  ImGui::SameLine();
+  ImGui::PushItemWidth(80.0);
+  ImGui::InputScalar("W", ImGuiDataType_U32, &config_.scene_size.width);
+  ImGui::SameLine();
+  ImGui::InputScalar("H", ImGuiDataType_U32, &config_.scene_size.height);
+  ImGui::PopItemWidth();
+
+  constexpr uint32_t min_cascades = 1;
+  constexpr uint32_t max_cascades = 10;
+  ImGui::SliderScalar("Cascades", ImGuiDataType_U32, &config_.cascades.cascades, &min_cascades, &max_cascades);
+
+  ImGui::InputFloat("Base Spacing", &config_.cascades.base_spacing);
+  ImGui::InputFloat("Base Interval", &config_.cascades.base_interval);
+  ImGui::InputFloat("Base Length", &config_.cascades.base_length);
+
+  for (size_t i = 0; i < materials_.size(); i++) {
+    const Material& material = materials_.at(i);
+    const ImVec4 color{material.color[0] + material.radiance[0], material.color[1] + material.radiance[1],
+                       material.color[2] + material.radiance[2], 1.0f};
+    if (i > 0) ImGui::SameLine();
+    if (ImGui::ColorButton((std::string("mat") + std::to_string(i)).c_str(), color, ImGuiColorEditFlags_NoTooltip)) {
+      draw_material_ = static_cast<uint8_t>(i);
+    }
+  }
+  if (ImGui::Button("Recompile framework")) {
+    should_compile_ = true;
+  }
+
+  ImGui::Render();
+  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+}
+
 void Renderer2D::import_resources()
 {
   swapchain_imports_.resize(swapchain_.image_count());
@@ -842,6 +920,26 @@ void Renderer2D::import_resources()
     } else {
       res = context_.import_image(swapchain_image_info, swapchain_.image(i), "Swapchain image");
     }
+  }
+}
+
+void Renderer2D::create_scene_image()
+{
+  device_.get().waitIdle();
+  scene_image_.emplace(device_.get_allocator(), ImageDesc{}
+                                                    .set_extent(config_.scene_size.width, config_.scene_size.height)
+                                                    .set_format(vk::Format::eR8Uint)
+                                                    .set_usage(vk::ImageUsageFlagBits::eStorage));
+  scene_image_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  const fwrk::ImageImportInfo image_import_info{
+      .type = VK_IMAGE_TYPE_2D,
+      .size = {.width = config_.scene_size.width, .height = config_.scene_size.height, .depth = 1},
+      .format = VK_FORMAT_R8_UINT,
+      .state = fwrk::PhysicalState::Undefined};
+  if (scene_image_import_) {
+    context_.update_image(scene_image_import_, image_import_info, scene_image_->image());
+  } else {
+    scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
   }
 }
 
