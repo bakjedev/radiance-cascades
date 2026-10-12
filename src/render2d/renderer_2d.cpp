@@ -946,11 +946,23 @@ void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
 
   for (size_t i = 0; i < materials_.size(); i++) {
     const Material& material = materials_.at(i);
-    const ImVec4 color{material.color[0] + material.radiance[0], material.color[1] + material.radiance[1],
-                       material.color[2] + material.radiance[2], 1.0f};
+    const ImVec4 color{material.color[0], material.color[1], material.color[2], 1.0f};
+    const ImVec4 radiance{material.radiance[0], material.radiance[1], material.radiance[2], 1.0f};
+    const bool has_radiance = !(radiance.x == 0.0f && radiance.y == 0.0f && radiance.z == 0.0f);
     if (i > 0) ImGui::SameLine();
-    if (ImGui::ColorButton((std::string("mat") + std::to_string(i)).c_str(), color, ImGuiColorEditFlags_NoTooltip)) {
+    if (ImGui::ColorButton((std::string("mat") + std::to_string(i)).c_str(), has_radiance ? radiance : color,
+                           ImGuiColorEditFlags_NoTooltip)) {
       draw_material_ = static_cast<uint8_t>(i);
+    }
+
+    if (has_radiance && ImGui::IsItemHovered()) {
+      if (ImGui::BeginTooltip()) {
+        ImGui::Text("Base color:");
+        ImGui::SameLine();
+        ImGui::ColorButton((std::string("mattooltip") + std::to_string(i)).c_str(), color,
+                           ImGuiColorEditFlags_NoTooltip);
+        ImGui::EndTooltip();
+      }
     }
   }
 
