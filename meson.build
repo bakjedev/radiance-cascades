@@ -53,6 +53,7 @@ shaders = [
     'cascades.slang',
     'merge.slang',
     'light.slang',
+    'composite.slang',
     'blit.slang',
     'pull_push.slang'
 ]

@@ -33,6 +33,10 @@ struct Renderer2DConfig {
     float base_interval{90.0f};
     float base_length{0.8f};
   } cascades;
+
+  struct CompositeConfig {
+    float rim{12.0f};
+  } composite;
 };
 
 struct Material {
@@ -75,6 +79,7 @@ private:
   void merge_pass(vk::CommandBuffer cmd);
   void light_pass(vk::CommandBuffer cmd);
   void pull_push_pass(vk::CommandBuffer cmd);
+  void composite_pass(vk::CommandBuffer cmd);
   void blit_pass(vk::CommandBuffer cmd);
   void imgui_pass(vk::CommandBuffer cmd);
 
@@ -126,6 +131,10 @@ private:
   vk::UniquePipeline pull_pipeline_;
   vk::UniquePipeline push_pipeline_;
 
+  vk::UniquePipelineLayout composite_pipeline_layout_;
+  vk::UniqueShaderModule composite_shader_module_;
+  vk::UniquePipeline composite_pipeline_;
+
   vk::UniquePipelineLayout blit_pipeline_layout_;
   vk::UniqueShaderModule blit_shader_module_;
   vk::UniquePipeline blit_pipeline_;
@@ -148,13 +157,17 @@ private:
   vk::UniqueImageView sdf_view_;
   fwrk::ResourceID sdf_id_;
 
+  std::optional<Image> cascades_image_;
+  vk::UniqueImageView cascades_view_;
+  fwrk::ResourceID cascades_id_;
+
   std::optional<Image> light_image_;
   std::vector<vk::UniqueImageView> light_views_;
   fwrk::ResourceID light_id_;
 
-  std::optional<Image> cascades_image_;
-  vk::UniqueImageView cascades_view_;
-  fwrk::ResourceID cascades_id_;
+  std::optional<Image> composite_image_;
+  vk::UniqueImageView composite_view_;
+  fwrk::ResourceID composite_id_;
 
   std::optional<Buffer> material_buffer_;
   std::optional<Buffer> ubo_;

@@ -76,6 +76,14 @@ namespace {
     uint32_t height;
   };
 
+  struct CompositePushConstant {
+    uint32_t composite_id;
+    uint32_t light_id;
+    uint32_t sdf_id;
+    uint32_t scene_id;
+    float rim;
+  };
+
   struct BlitPushConstant {
     uint32_t composite_id;
   };
@@ -85,10 +93,11 @@ namespace {
     JFAImage,
     SDFImage,
     CascadesImage,
+    CompositeImage,
     LightImage,
   };
 
-  enum SampledDescriptors { LightTexture = 0 };
+  enum SampledDescriptors { CompositeTexture = 0 };
 } // namespace
 
 Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
@@ -360,6 +369,24 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     push_pipeline_ = create_compute_pipeline(device_.get(), push_pipeline_desc);
   }
 
+  // Composite pipeline
+  {
+    vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
+
+    auto composite_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("composite.slang.spv", ShaderResourceLoader{&file_system_});
+
+    composite_shader_module_ = create_shader_module(device_.get(), composite_shader_resource->code);
+
+    composite_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&composite_push, 1});
+
+    const ComputePipelineDesc composite_pipeline_desc{.module = composite_shader_module_.get(),
+                                                      .layout = composite_pipeline_layout_.get()};
+
+    composite_pipeline_ = create_compute_pipeline(device_.get(), composite_pipeline_desc);
+  }
+
   // Blit pipeline
   {
     vk::PushConstantRange blit_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant)};
@@ -549,8 +576,15 @@ void Renderer2D::compile()
       .set_storage_image_write({.resource = {.id = light_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { pull_push_pass(cmd); });
 
+  graph.add_compute_pass("Composite")
+      .set_storage_image_read({.resource = {.id = light_id_}, .level_count = 1})
+      .set_storage_image_read({.resource = {.id = sdf_id_}})
+      .set_storage_image_read({.resource = {.id = scene_id_}})
+      .set_storage_image_write({.resource = {.id = composite_id_}})
+      .set_execute([this](vk::CommandBuffer cmd) { composite_pass(cmd); });
+
   graph.add_graphics_pass("Blit")
-      .set_image_read({.resource = {.id = light_id_}, .level_count = 1})
+      .set_image_read({.resource = {.id = composite_id_}})
       .set_color_attachment({.resource = {.id = swapchain_proxy_},
                              .load_op = fwrk::LoadOp::Clear,
                              .store_op = fwrk::StoreOp::Store,
@@ -827,6 +861,26 @@ void Renderer2D::pull_push_pass(vk::CommandBuffer cmd)
   }
 }
 
+void Renderer2D::composite_pass(vk::CommandBuffer cmd)
+{
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout_.get(), 0, 1,
+                         &bindless_descriptor_set_, 0, nullptr);
+
+  const CompositePushConstant push_constant{.composite_id = CompositeImage,
+                                            .light_id = LightImage,
+                                            .sdf_id = SDFImage,
+                                            .scene_id = SceneImage,
+                                            .rim = config_.composite.rim};
+
+  cmd.pushConstants(composite_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                    sizeof(CompositePushConstant), &push_constant);
+
+  const uint32_t gx = (config_.scene_size.width + 7) / 8;
+  const uint32_t gy = (config_.scene_size.height + 7) / 8;
+  cmd.dispatch(gx, gy, 1);
+}
+
 void Renderer2D::blit_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, blit_pipeline_.get());
@@ -853,7 +907,7 @@ void Renderer2D::blit_pass(vk::CommandBuffer cmd)
   cmd.setScissor(0, 1, &scissor);
 
   constexpr BlitPushConstant push_constant{
-      .composite_id = LightTexture,
+      .composite_id = CompositeTexture,
   };
 
   cmd.pushConstants(blit_pipeline_layout_.get(), vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant),
@@ -899,6 +953,9 @@ void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
       draw_material_ = static_cast<uint8_t>(i);
     }
   }
+
+  ImGui::SliderFloat("Rim", &config_.composite.rim, 0.0f, 100.0f);
+
   if (ImGui::Button("Recompile framework")) {
     should_compile_ = true;
   }
@@ -959,7 +1016,13 @@ void Renderer2D::import_images()
   if (light_id_) {
     context_.update_image(light_id_, image_import_info, light_image_->image());
   } else {
-    light_id_ = context_.import_image(image_import_info, light_image_->image(), "Light image");
+    light_id_ = context_.import_image(image_import_info, light_image_->image());
+  }
+
+  if (composite_id_) {
+    context_.update_image(composite_id_, image_import_info, composite_image_->image());
+  } else {
+    composite_id_ = context_.import_image(image_import_info, composite_image_->image());
   }
 
   image_import_info.size.width = cascades_width_;
@@ -992,18 +1055,24 @@ void Renderer2D::create_images()
                                                   .set_usage(vk::ImageUsageFlagBits::eStorage));
 
   light_mips_ = static_cast<uint32_t>(std::ceil(std::log2(config_.scene_size.width)));
-  light_image_.emplace(device_.get_allocator(),
-                       ImageDesc{}
-                           .set_extent(config_.scene_size.width, config_.scene_size.height)
-                           .set_mips(light_mips_)
-                           .set_format(vk::Format::eR16G16B16A16Sfloat)
-                           .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled));
+  light_image_.emplace(device_.get_allocator(), ImageDesc{}
+                                                    .set_extent(config_.scene_size.width, config_.scene_size.height)
+                                                    .set_mips(light_mips_)
+                                                    .set_format(vk::Format::eR16G16B16A16Sfloat)
+                                                    .set_usage(vk::ImageUsageFlagBits::eStorage));
+
+  composite_image_.emplace(device_.get_allocator(),
+                           ImageDesc{}
+                               .set_extent(config_.scene_size.width, config_.scene_size.height)
+                               .set_format(vk::Format::eR16G16B16A16Sfloat)
+                               .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled));
 
 
   scene_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
   jfa_view_ =
       jfa_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
   sdf_view_ = sdf_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  composite_view_ = composite_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
 
   light_views_.resize(light_mips_);
   for (uint32_t i = 0; i < light_mips_; i++) {
@@ -1048,7 +1117,8 @@ void Renderer2D::update_descriptor()
       .add_image(0, JFAImage, vk::DescriptorType::eStorageImage, jfa_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, SDFImage, vk::DescriptorType::eStorageImage, sdf_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, CascadesImage, vk::DescriptorType::eStorageImage, cascades_view_.get(), vk::ImageLayout::eGeneral)
-      .add_image(2, LightTexture, vk::DescriptorType::eSampledImage, light_views_[0].get(),
+      .add_image(0, CompositeImage, vk::DescriptorType::eStorageImage, composite_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(2, CompositeTexture, vk::DescriptorType::eSampledImage, composite_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal);
 
   for (uint32_t i = 0; i < light_mips_; i++) {
