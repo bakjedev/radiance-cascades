@@ -6,7 +6,7 @@ struct PushConstant {
 }
 
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
-[[vk::binding(0, 0)]] RWTexture2D<int4> storageImagesI[];
+[[vk::binding(0, 0)]] RWTexture2DArray<int4> storageImageArrayI[];
 [[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
 [shader("compute")]
@@ -16,7 +16,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     UBO ubo = uniformBuffers[0];
     if (any(local >= int2(ubo.scene_width, ubo.scene_height))) return;
 
-    int2 seed = storageImagesI[pc.jfa_id].Load(local).xy;
-    float dist = distance(float2(local), float2(seed));
-    storageImagesF[pc.sdf_id].Store(local, float4(dist));
+    int4 seed = storageImageArrayI[pc.jfa_id].Load(int3(local, 1));
+    bool inside = all(seed.xy == local);
+    int2 target = inside ? seed.zw : seed.xy;
+
+    float dist = distance(float2(local), float2(target));
+
+    storageImagesF[pc.sdf_id].Store(local, float4(inside ? -dist : dist));
 }

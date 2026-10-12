@@ -22,8 +22,8 @@ namespace {
   };
 
   struct JFAPushConstant {
-    uint32_t read_id;
-    uint32_t write_id;
+    uint32_t jfa_id;
+    uint32_t read_idx;
     uint32_t k;
   };
 
@@ -61,18 +61,34 @@ namespace {
     uint32_t base_probe_size;
   };
 
-  struct CompositePushConstant {
+  struct LightPushConstant {
     uint32_t cascade_id;
-    uint32_t composite_id;
+    uint32_t light_id;
     uint32_t sdf_id;
-    uint32_t jfa_id;
     float spacing;
     uint32_t probe_size;
+  };
+
+  struct PullPushConstant {
+    uint32_t read_id;
+    uint32_t write_id;
+    uint32_t width;
+    uint32_t height;
   };
 
   struct BlitPushConstant {
     uint32_t composite_id;
   };
+
+  enum StorageDescriptors {
+    SceneImage = 0,
+    JFAImage,
+    SDFImage,
+    CascadesImage,
+    LightImage,
+  };
+
+  enum SampledDescriptors { LightTexture = 0 };
 } // namespace
 
 Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
@@ -80,8 +96,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     window_(window), event_dispatcher_(event_dispatcher), resource_manager_(resource_manager),
     file_system_(file_system), device_(instance_.get(), create_surface(window, instance_)),
     swapchain_(device_, {window.width(), window.height()}, vk::ImageUsageFlagBits::eColorAttachment),
-    fwrk_allocator_(device_.get_allocator()),
-    context_(instance_.get(), device_.get(), frames_in_flight, fwrk_allocator_, true)
+    context_(instance_.get(), device_.get(), frames_in_flight, empty_allocator_, true)
 {
   for (Frame& frame: frames_) {
     create_frame(frame, device_);
@@ -95,7 +110,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
 
   event_dispatcher.listen<WindowResizeEvent>([this](const WindowResizeEvent& event) {
     swapchain_.recreate({static_cast<uint32_t>(event.width), static_cast<uint32_t>(event.height)});
-    import_resources();
+    import_swapchain_images();
   });
 
   // ----------------------------------------
@@ -306,22 +321,43 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     merge_pipeline_ = create_compute_pipeline(device_.get(), merge_pipeline_desc);
   }
 
-  // Composite pipeline
+  // Light pipeline
   {
-    vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
+    vk::PushConstantRange light_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(LightPushConstant)};
 
-    auto composite_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("composite.slang.spv", ShaderResourceLoader{&file_system_});
+    auto light_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("light.slang.spv", ShaderResourceLoader{&file_system_});
 
-    composite_shader_module_ = create_shader_module(device_.get(), composite_shader_resource->code);
+    light_shader_module_ = create_shader_module(device_.get(), light_shader_resource->code);
 
-    composite_pipeline_layout_ =
-        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&composite_push, 1});
+    light_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&light_push, 1});
 
-    const ComputePipelineDesc composite_pipeline_desc{.module = composite_shader_module_.get(),
-                                                      .layout = composite_pipeline_layout_.get()};
+    const ComputePipelineDesc light_pipeline_desc{.module = light_shader_module_.get(),
+                                                  .layout = light_pipeline_layout_.get()};
 
-    composite_pipeline_ = create_compute_pipeline(device_.get(), composite_pipeline_desc);
+    light_pipeline_ = create_compute_pipeline(device_.get(), light_pipeline_desc);
+  }
+
+  // Push pull pipelines
+  {
+    vk::PushConstantRange pull_push_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(PullPushConstant)};
+
+    auto pull_push_shader_resource =
+        resource_manager_.create_from_file<ShaderResource>("pull_push.slang.spv", ShaderResourceLoader{&file_system_});
+
+    pull_push_shader_module_ = create_shader_module(device_.get(), pull_push_shader_resource->code);
+
+    pull_push_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&pull_push_push, 1});
+
+    const ComputePipelineDesc pull_pipeline_desc{
+        .module = pull_push_shader_module_.get(), .entry = "pull", .layout = pull_push_pipeline_layout_.get()};
+    pull_pipeline_ = create_compute_pipeline(device_.get(), pull_pipeline_desc);
+
+    const ComputePipelineDesc push_pipeline_desc{
+        .module = pull_push_shader_module_.get(), .entry = "push", .layout = pull_push_pipeline_layout_.get()};
+    push_pipeline_ = create_compute_pipeline(device_.get(), push_pipeline_desc);
   }
 
   // Blit pipeline
@@ -353,9 +389,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // ----------------------------------------
   // Imports
   // ----------------------------------------
-  create_scene_image();
-
-  import_resources();
+  import_swapchain_images();
   swapchain_proxy_ = context_.create_proxy();
 }
 
@@ -408,7 +442,7 @@ bool Renderer2D::begin_frame()
   auto image_index = swapchain_.acquire_next_image(frame.image_available.get());
   if (!image_index) {
     swapchain_.recreate({window_.width(), window_.height()});
-    import_resources();
+    import_swapchain_images();
     return false;
   }
   image_index_ = image_index.value();
@@ -460,7 +494,7 @@ void Renderer2D::end_frame()
 
   if (!swapchain_.present(device_.get_queue(), image_index_, submit_semaphores_.at(image_index_).get())) {
     swapchain_.recreate({window_.width(), window_.height()});
-    import_resources();
+    import_swapchain_images();
   }
 
   current_frame_ = (current_frame_ + 1) % frames_in_flight;
@@ -470,101 +504,53 @@ void Renderer2D::compile()
 {
   fwrk::Graph& graph = context_.graph();
 
-  if (scene_image_->extent().width != config_.scene_size.width ||
-      scene_image_->extent().height != config_.scene_size.height) {
-    create_scene_image();
-  }
-  // ------------------
-  // Transients
-  // ------------------
-  fwrk::ImageCreateInfo create_info{
-      .type = VK_IMAGE_TYPE_2D,
-      .size = {.width = config_.scene_size.width, .height = config_.scene_size.height, .depth = 1},
-      .format = VK_FORMAT_R32G32B32A32_SINT,
-      .flags = {},
-      .mips = 1,
-      .layers = 1,
-      .samples = VK_SAMPLE_COUNT_1_BIT,
-      .tiling = VK_IMAGE_TILING_OPTIMAL,
-      .usage = VK_IMAGE_USAGE_STORAGE_BIT};
-  const fwrk::ResourceID jfa_1 = graph.create_image(create_info);
-  const fwrk::ResourceID jfa_2 = graph.create_image(create_info);
-
-  create_info.format = VK_FORMAT_R32_SFLOAT;
-  create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT;
-  const fwrk::ResourceID sdf = graph.create_image(create_info);
-
-  create_info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-  create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-  const fwrk::ResourceID composite = graph.create_image(create_info);
-
-  // kinda needs to be a multiple of 2.
-  const auto base_probe_dir_count = static_cast<uint32_t>(std::round(360.0f / config_.cascades.base_interval));
-  const auto probe_size = static_cast<uint32_t>(std::ceil(std::sqrt(base_probe_dir_count)));
-  const auto probe_per_row =
-      static_cast<uint32_t>(std::floor(static_cast<float>(config_.scene_size.width) / config_.cascades.base_spacing));
-  const auto probe_per_col =
-      static_cast<uint32_t>(std::floor(static_cast<float>(config_.scene_size.height) / config_.cascades.base_spacing));
-  const auto cascade_width = probe_per_row * probe_size;
-  const auto cascade_height = probe_per_col * probe_size;
-
-  create_info.size.width = cascade_width;
-  create_info.size.height = cascade_height;
-  create_info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-  create_info.layers = config_.cascades.cascades;
-  create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT;
-  const fwrk::ResourceID cascades = graph.create_image(create_info);
-
-  const auto base_probe_spacing = config_.cascades.base_spacing;
-  const auto base_probe_length = config_.cascades.base_length;
+  create_images();
+  create_cascade_image();
+  import_images();
+  update_descriptor();
 
   // ------------------
   // Passes
   // ------------------
   graph.add_compute_pass("Draw")
-      .set_storage_image_write({.resource = {.id = scene_image_import_}})
-      .set_storage_image_write({.resource = {.id = jfa_1}})
+      .set_storage_image_write({.resource = {.id = scene_id_}})
+      .set_storage_image_write({.resource = {.id = jfa_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { draw_pass(cmd); });
 
   graph.add_compute_pass("Convert")
-      .set_storage_image_read({.resource = {.id = scene_image_import_}})
-      .set_storage_image_write({.resource = {.id = jfa_1}})
+      .set_storage_image_read({.resource = {.id = scene_id_}})
+      .set_storage_image_write({.resource = {.id = jfa_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { convert_pass(cmd); });
 
   graph.add_compute_pass("JFA")
-      .set_storage_image_write({.resource = {.id = jfa_1}})
-      .set_storage_image_write({.resource = {.id = jfa_2}})
-      .set_execute([this, jfa_1, jfa_2](vk::CommandBuffer cmd) { jfa_pass(cmd, jfa_1, jfa_2); });
+      .set_storage_image_write({.resource = {.id = jfa_id_}})
+      .set_execute([this](vk::CommandBuffer cmd) { jfa_pass(cmd); });
 
   graph.add_compute_pass("SDF")
-      .set_storage_image_read({.resource = {.id = jfa_2}})
-      .set_storage_image_write({.resource = {.id = sdf}})
+      .set_storage_image_read({.resource = {.id = jfa_id_}})
+      .set_storage_image_write({.resource = {.id = sdf_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { sdf_pass(cmd); });
 
   graph.add_compute_pass("Cascades")
-      .set_storage_image_read({.resource = {.id = sdf}})
-      .set_storage_image_write({.resource = {.id = cascades}})
-      .set_execute([this, cascade_width, cascade_height, probe_size, base_probe_spacing, base_probe_dir_count,
-                    base_probe_length](vk::CommandBuffer cmd) {
-        cascades_pass(cmd, cascade_width, cascade_height, probe_size, base_probe_spacing, base_probe_dir_count,
-                      base_probe_length);
-      });
+      .set_storage_image_read({.resource = {.id = sdf_id_}})
+      .set_storage_image_write({.resource = {.id = cascades_id_}})
+      .set_execute([this](vk::CommandBuffer cmd) { cascades_pass(cmd); });
 
   graph.add_compute_pass("Merge")
-      .set_storage_image_write({.resource = {.id = cascades}})
-      .set_execute([this, cascade_width, cascade_height, probe_size, cascades](vk::CommandBuffer cmd) {
-        merge_pass(cmd, cascade_width, cascade_height, probe_size, cascades);
-      });
+      .set_storage_image_write({.resource = {.id = cascades_id_}})
+      .set_execute([this](vk::CommandBuffer cmd) { merge_pass(cmd); });
 
-  graph.add_compute_pass("Composite")
-      .set_storage_image_read({.resource = {.id = cascades}})
-      .set_storage_image_write({.resource = {.id = composite}})
-      .set_execute([this, base_probe_spacing, probe_size](vk::CommandBuffer cmd) {
-        composite_pass(cmd, base_probe_spacing, probe_size);
-      });
+  graph.add_compute_pass("Light")
+      .set_storage_image_read({.resource = {.id = cascades_id_}})
+      .set_storage_image_write({.resource = {.id = light_id_}, .level_count = 1})
+      .set_execute([this](vk::CommandBuffer cmd) { light_pass(cmd); });
+
+  graph.add_compute_pass("Pull Push")
+      .set_storage_image_write({.resource = {.id = light_id_}})
+      .set_execute([this](vk::CommandBuffer cmd) { pull_push_pass(cmd); });
 
   graph.add_graphics_pass("Blit")
-      .set_image_read({.resource = {.id = composite}})
+      .set_image_read({.resource = {.id = light_id_}, .level_count = 1})
       .set_color_attachment({.resource = {.id = swapchain_proxy_},
                              .load_op = fwrk::LoadOp::Clear,
                              .store_op = fwrk::StoreOp::Store,
@@ -583,43 +569,6 @@ void Renderer2D::compile()
                             {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
 
   graph.compile();
-
-  // Very ugly descriptor updates...
-  vk::ImageSubresourceRange subresource_range{};
-  subresource_range.setAspectMask(vk::ImageAspectFlagBits::eColor);
-  subresource_range.setBaseMipLevel(0);
-  subresource_range.setBaseArrayLayer(0);
-  subresource_range.setLevelCount(vk::RemainingMipLevels);
-  subresource_range.setLayerCount(vk::RemainingArrayLayers);
-  const fwrk::ViewKey view_key{subresource_range, VK_IMAGE_VIEW_TYPE_2D};
-  const fwrk::ViewKey array_view_key{subresource_range, VK_IMAGE_VIEW_TYPE_2D_ARRAY};
-
-  DescriptorWriter{}
-      .add_image(0, 1, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 0),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 2, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 0),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 3, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_1, view_key, 1),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 4, vk::DescriptorType::eStorageImage, context_.acquire_image_view(jfa_2, view_key, 1),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 5, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 0),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 6, vk::DescriptorType::eStorageImage, context_.acquire_image_view(sdf, view_key, 1),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 7, vk::DescriptorType::eStorageImage, context_.acquire_image_view(cascades, array_view_key, 0),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 8, vk::DescriptorType::eStorageImage, context_.acquire_image_view(cascades, array_view_key, 1),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 9, vk::DescriptorType::eStorageImage, context_.acquire_image_view(composite, view_key, 0),
-                 vk::ImageLayout::eGeneral)
-      .add_image(0, 10, vk::DescriptorType::eStorageImage, context_.acquire_image_view(composite, view_key, 1),
-                 vk::ImageLayout::eGeneral)
-      .add_image(2, 0, vk::DescriptorType::eSampledImage, context_.acquire_image_view(composite, view_key, 0),
-                 vk::ImageLayout::eShaderReadOnlyOptimal)
-      .add_image(2, 1, vk::DescriptorType::eSampledImage, context_.acquire_image_view(composite, view_key, 1),
-                 vk::ImageLayout::eShaderReadOnlyOptimal)
-      .update(device_.get(), bindless_descriptor_set_);
 }
 
 void Renderer2D::draw_pass(vk::CommandBuffer cmd)
@@ -649,7 +598,7 @@ void Renderer2D::convert_pass(vk::CommandBuffer cmd)
                          &bindless_descriptor_set_, 0, nullptr);
 
   const ConvertPushConstant push_constant{
-      .jfa_id = 1 + current_frame_ * 2,
+      .jfa_id = JFAImage,
   };
 
   cmd.pushConstants(convert_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(ConvertPushConstant),
@@ -660,7 +609,7 @@ void Renderer2D::convert_pass(vk::CommandBuffer cmd)
   cmd.dispatch(gx, gy, 1);
 }
 
-void Renderer2D::jfa_pass(vk::CommandBuffer cmd, const fwrk::ResourceID jfa_1, const fwrk::ResourceID jfa_2)
+void Renderer2D::jfa_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, jfa_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
@@ -676,29 +625,27 @@ void Renderer2D::jfa_pass(vk::CommandBuffer cmd, const fwrk::ResourceID jfa_1, c
                      .setNewLayout(vk::ImageLayout::eGeneral)
                      .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
                      .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
-                     .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+                     .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
+                     .setImage(jfa_image_->image());
 
   const uint32_t gx = (config_.scene_size.width + 7) / 8;
   const uint32_t gy = (config_.scene_size.height + 7) / 8;
 
-  bool use_jfa_1 = true;
+  bool use_jfa_2 = false;
   const auto k_start = std::max(config_.scene_size.width, config_.scene_size.height);
   const auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
   for (uint32_t i = 1; i <= k_count; i++) {
-    const JFAPushConstant push_constant{.read_id = (use_jfa_1 ? 1 : 2) + current_frame_ * 2,
-                                        .write_id = (use_jfa_1 ? 2 : 1) + current_frame_ * 2,
-                                        .k = k_start >> i};
+    const JFAPushConstant push_constant{
+        .jfa_id = JFAImage, .read_idx = static_cast<uint32_t>(use_jfa_2), .k = k_start >> i};
     cmd.pushConstants(jfa_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant),
                       &push_constant);
 
     cmd.dispatch(gx, gy, 1);
 
     if (i > 1) {
-      barrier.setImage(use_jfa_1 ? context_.get_raw_image(jfa_1, current_frame_)
-                                 : context_.get_raw_image(jfa_2, current_frame_));
       cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
     }
-    use_jfa_1 = !use_jfa_1;
+    use_jfa_2 = !use_jfa_2;
   }
 }
 
@@ -708,9 +655,9 @@ void Renderer2D::sdf_pass(vk::CommandBuffer cmd)
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, sdf_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
 
-  const SDFPushConstant push_constant{
-      .jfa_id = (1 + current_frame_) * 2,
-      .sdf_id = 5 + current_frame_,
+  constexpr SDFPushConstant push_constant{
+      .jfa_id = JFAImage,
+      .sdf_id = SDFImage,
   };
 
   cmd.pushConstants(sdf_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant),
@@ -721,26 +668,24 @@ void Renderer2D::sdf_pass(vk::CommandBuffer cmd)
   cmd.dispatch(gx, gy, 1);
 }
 
-void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const uint32_t cascade_width, const uint32_t cascade_height,
-                               const uint32_t probe_size, const float base_probe_spacing,
-                               const uint32_t base_probe_dir_count, const float base_probe_length)
+void Renderer2D::cascades_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, cascades_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, cascades_pipeline_layout_.get(), 0, 1,
                          &bindless_descriptor_set_, 0, nullptr);
 
-  CascadesPushConstant push_constant{.sdf_id = 5 + current_frame_,
-                                     .cascades_id = 7 + current_frame_,
-                                     .cascade_width = cascade_width,
-                                     .cascade_height = cascade_height,
-                                     .cascade = 3,
-                                     .base_probe_size = probe_size,
-                                     .base_spacing = base_probe_spacing,
-                                     .base_probe_dir_count = base_probe_dir_count,
-                                     .base_length = base_probe_length};
+  CascadesPushConstant push_constant{.sdf_id = SDFImage,
+                                     .cascades_id = CascadesImage,
+                                     .cascade_width = cascades_width_,
+                                     .cascade_height = cascades_height_,
+                                     .cascade = 0,
+                                     .base_probe_size = base_probe_size_,
+                                     .base_spacing = base_probe_spacing_,
+                                     .base_probe_dir_count = base_probe_size_ * base_probe_size_,
+                                     .base_length = base_probe_length_};
 
-  const uint32_t gx = (cascade_width + 7) / 8;
-  const uint32_t gy = (cascade_height + 7) / 8;
+  const uint32_t gx = (cascades_width_ + 7) / 8;
+  const uint32_t gy = (cascades_height_ + 7) / 8;
 
   for (uint32_t i = 0; i < config_.cascades.cascades; i++) {
     push_constant.cascade = i;
@@ -753,22 +698,21 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const uint32_t cascade_wid
   }
 }
 
-void Renderer2D::merge_pass(vk::CommandBuffer cmd, const uint32_t cascade_width, const uint32_t cascade_height,
-                            const uint32_t probe_size, const fwrk::ResourceID cascades)
+void Renderer2D::merge_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, merge_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, merge_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
 
-  const uint32_t gx = (cascade_width + 7) / 8;
-  const uint32_t gy = (cascade_height + 7) / 8;
+  const uint32_t gx = (cascades_width_ + 7) / 8;
+  const uint32_t gy = (cascades_height_ + 7) / 8;
 
   MergePushConstant push_constant{
-      .cascade_id = 7 + current_frame_,
+      .cascade_id = CascadesImage,
       .cascade = 0,
-      .cascade_width = cascade_width,
-      .cascade_height = cascade_height,
-      .base_probe_size = probe_size,
+      .cascade_width = cascades_width_,
+      .cascade_height = cascades_height_,
+      .base_probe_size = base_probe_size_,
   };
 
   auto barrier =
@@ -782,7 +726,7 @@ void Renderer2D::merge_pass(vk::CommandBuffer cmd, const uint32_t cascade_width,
           .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
           .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
           .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, vk::RemainingArrayLayers})
-          .setImage(context_.get_raw_image(cascades));
+          .setImage(cascades_image_->image());
 
   for (uint32_t i = config_.cascades.cascades - 1; i-- > 0;) {
     push_constant.cascade = i;
@@ -794,27 +738,93 @@ void Renderer2D::merge_pass(vk::CommandBuffer cmd, const uint32_t cascade_width,
   }
 }
 
-void Renderer2D::composite_pass(vk::CommandBuffer cmd, const float spacing, const uint32_t probe_size)
+void Renderer2D::light_pass(vk::CommandBuffer cmd)
 {
-  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout_.get(), 0, 1,
-                         &bindless_descriptor_set_, 0, nullptr);
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, light_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, light_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
+                         0, nullptr);
 
-  const CompositePushConstant push_constant{
-      .cascade_id = 7 + current_frame_,
-      .composite_id = 9 + current_frame_,
-      .sdf_id = 5 + current_frame_,
-      .jfa_id = (1 + current_frame_) * 2,
-      .spacing = spacing,
-      .probe_size = probe_size,
+  const LightPushConstant push_constant{
+      .cascade_id = CascadesImage,
+      .light_id = LightImage,
+      .sdf_id = SDFImage,
+      .spacing = base_probe_spacing_,
+      .probe_size = base_probe_size_,
   };
 
-  cmd.pushConstants(composite_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
-                    sizeof(CompositePushConstant), &push_constant);
+  cmd.pushConstants(light_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(LightPushConstant),
+                    &push_constant);
 
   const uint32_t gx = (config_.scene_size.width + 7) / 8;
   const uint32_t gy = (config_.scene_size.height + 7) / 8;
   cmd.dispatch(gx, gy, 1);
+}
+
+void Renderer2D::pull_push_pass(vk::CommandBuffer cmd)
+{
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pull_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pull_push_pipeline_layout_.get(), 0, 1,
+                         &bindless_descriptor_set_, 0, nullptr);
+
+  auto barrier = vk::ImageMemoryBarrier2{}
+                     .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+                     .setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
+                     .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+                     .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageRead)
+                     .setOldLayout(vk::ImageLayout::eGeneral)
+                     .setNewLayout(vk::ImageLayout::eGeneral)
+                     .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
+                     .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
+                     .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
+                     .setImage(light_image_->image());
+
+  PullPushConstant push_constant{.read_id = 0, .write_id = 0, .width = 0, .height = 0};
+
+  for (uint32_t i = 1; i < light_mips_; i++) {
+    push_constant.read_id = LightImage + i - 1;
+    push_constant.write_id = LightImage + i;
+    push_constant.width = config_.scene_size.width >> i;
+    push_constant.height = config_.scene_size.height >> i;
+
+    cmd.pushConstants(pull_push_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(PullPushConstant),
+                      &push_constant);
+
+    if (i > 1) {
+      barrier.subresourceRange.setBaseMipLevel(i - 1);
+      cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+    }
+
+    const uint32_t gx = (push_constant.width + 7) / 8;
+    const uint32_t gy = (push_constant.height + 7) / 8;
+    cmd.dispatch(gx, gy, 1);
+  }
+
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, push_pipeline_.get());
+
+  std::array barriers = {barrier, barrier};
+  barriers[0].subresourceRange.baseMipLevel += 1;
+  barriers[1].setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageRead);
+  barriers[1].setDstAccessMask(vk::AccessFlagBits2::eShaderStorageWrite);
+  cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barriers));
+
+  for (uint32_t i = light_mips_; i-- > 1;) {
+    push_constant.read_id = LightImage + i;
+    push_constant.write_id = LightImage + i - 1;
+    push_constant.width = config_.scene_size.width >> (i - 1);
+    push_constant.height = config_.scene_size.height >> (i - 1);
+
+    cmd.pushConstants(pull_push_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(PullPushConstant),
+                      &push_constant);
+
+    if (i < 9) {
+      barrier.subresourceRange.setBaseMipLevel(i);
+      cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+    }
+
+    const uint32_t gx = (push_constant.width + 7) / 8;
+    const uint32_t gy = (push_constant.height + 7) / 8;
+    cmd.dispatch(gx, gy, 1);
+  }
 }
 
 void Renderer2D::blit_pass(vk::CommandBuffer cmd)
@@ -842,8 +852,8 @@ void Renderer2D::blit_pass(vk::CommandBuffer cmd)
   const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{swapchain_.extent().width, swapchain_.extent().height}};
   cmd.setScissor(0, 1, &scissor);
 
-  const BlitPushConstant push_constant{
-      .composite_id = current_frame_,
+  constexpr BlitPushConstant push_constant{
+      .composite_id = LightTexture,
   };
 
   cmd.pushConstants(blit_pipeline_layout_.get(), vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant),
@@ -898,7 +908,7 @@ void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 }
 
-void Renderer2D::import_resources()
+void Renderer2D::import_swapchain_images()
 {
   swapchain_imports_.resize(swapchain_.image_count());
 
@@ -917,34 +927,136 @@ void Renderer2D::import_resources()
   }
 }
 
-void Renderer2D::create_scene_image()
+void Renderer2D::import_images()
 {
-  device_.get().waitIdle();
-  scene_image_.emplace(device_.get_allocator(), ImageDesc{}
-                                                    .set_extent(config_.scene_size.width, config_.scene_size.height)
-                                                    .set_format(vk::Format::eR8Uint)
-                                                    .set_usage(vk::ImageUsageFlagBits::eStorage));
-  scene_image_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
-  const fwrk::ImageImportInfo image_import_info{
+  fwrk::ImageImportInfo image_import_info{
       .type = VK_IMAGE_TYPE_2D,
       .size = {.width = config_.scene_size.width, .height = config_.scene_size.height, .depth = 1},
       .format = VK_FORMAT_R8_UINT,
       .state = fwrk::PhysicalState::Undefined};
-  if (scene_image_import_) {
-    context_.update_image(scene_image_import_, image_import_info, scene_image_->image());
+
+  if (scene_id_) {
+    context_.update_image(scene_id_, image_import_info, scene_image_->image());
   } else {
-    scene_image_import_ = context_.import_image(image_import_info, scene_image_->image());
+    scene_id_ = context_.import_image(image_import_info, scene_image_->image());
   }
 
-  DescriptorWriter{}
-      .add_image(0, 0, vk::DescriptorType::eStorageImage, scene_image_view_.get(), vk::ImageLayout::eGeneral)
-      .update(device_.get(), bindless_descriptor_set_);
+  image_import_info.format = VK_FORMAT_R32G32B32A32_SINT;
+  if (jfa_id_) {
+    context_.update_image(jfa_id_, image_import_info, jfa_image_->image());
+  } else {
+    jfa_id_ = context_.import_image(image_import_info, jfa_image_->image());
+  }
+
+  image_import_info.format = VK_FORMAT_R32_SFLOAT;
+  if (sdf_id_) {
+    context_.update_image(sdf_id_, image_import_info, sdf_image_->image());
+  } else {
+    sdf_id_ = context_.import_image(image_import_info, sdf_image_->image());
+  }
+
+  image_import_info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+  if (light_id_) {
+    context_.update_image(light_id_, image_import_info, light_image_->image());
+  } else {
+    light_id_ = context_.import_image(image_import_info, light_image_->image(), "Light image");
+  }
+
+  image_import_info.size.width = cascades_width_;
+  image_import_info.size.height = cascades_height_;
+  if (cascades_id_) {
+    context_.update_image(cascades_id_, image_import_info, cascades_image_->image());
+  } else {
+    cascades_id_ = context_.import_image(image_import_info, cascades_image_->image());
+  }
+}
+
+void Renderer2D::create_images()
+{
+  device_.get().waitIdle();
+
+  scene_image_.emplace(device_.get_allocator(), ImageDesc{}
+                                                    .set_extent(config_.scene_size.width, config_.scene_size.height)
+                                                    .set_format(vk::Format::eR8Uint)
+                                                    .set_usage(vk::ImageUsageFlagBits::eStorage));
+
+  jfa_image_.emplace(device_.get_allocator(), ImageDesc{}
+                                                  .set_extent(config_.scene_size.width, config_.scene_size.height)
+                                                  .set_format(vk::Format::eR32G32B32A32Sint)
+                                                  .set_layers(2)
+                                                  .set_usage(vk::ImageUsageFlagBits::eStorage));
+
+  sdf_image_.emplace(device_.get_allocator(), ImageDesc{}
+                                                  .set_extent(config_.scene_size.width, config_.scene_size.height)
+                                                  .set_format(vk::Format::eR32Sfloat)
+                                                  .set_usage(vk::ImageUsageFlagBits::eStorage));
+
+  light_mips_ = static_cast<uint32_t>(std::ceil(std::log2(config_.scene_size.width)));
+  light_image_.emplace(device_.get_allocator(),
+                       ImageDesc{}
+                           .set_extent(config_.scene_size.width, config_.scene_size.height)
+                           .set_mips(light_mips_)
+                           .set_format(vk::Format::eR16G16B16A16Sfloat)
+                           .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled));
+
+
+  scene_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  jfa_view_ =
+      jfa_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
+  sdf_view_ = sdf_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+
+  light_views_.resize(light_mips_);
+  for (uint32_t i = 0; i < light_mips_; i++) {
+    light_views_[i] =
+        light_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2D, i);
+  }
 
   void* ubo_data;
   vmaMapMemory(device_.get_allocator(), ubo_->allocation(), &ubo_data);
   const UBOData ubo{.image_width = config_.scene_size.width, .image_height = config_.scene_size.height};
   memcpy(ubo_data, &ubo, sizeof(UBOData));
   vmaUnmapMemory(device_.get_allocator(), ubo_->allocation());
+}
+
+void Renderer2D::create_cascade_image()
+{
+  const auto base_probe_dir_count = static_cast<uint32_t>(std::round(360.0f / config_.cascades.base_interval));
+  base_probe_size_ = static_cast<uint32_t>(std::ceil(std::sqrt(base_probe_dir_count)));
+  const auto probe_per_row =
+      static_cast<uint32_t>(std::floor(static_cast<float>(config_.scene_size.width) / config_.cascades.base_spacing));
+  const auto probe_per_col =
+      static_cast<uint32_t>(std::floor(static_cast<float>(config_.scene_size.height) / config_.cascades.base_spacing));
+  cascades_width_ = probe_per_row * base_probe_size_;
+  cascades_height_ = probe_per_col * base_probe_size_;
+
+  base_probe_spacing_ = config_.cascades.base_spacing;
+  base_probe_length_ = config_.cascades.base_length;
+
+  cascades_image_.emplace(device_.get_allocator(), ImageDesc{}
+                                                       .set_extent(cascades_width_, cascades_height_)
+                                                       .set_format(vk::Format::eR16G16B16A16Sfloat)
+                                                       .set_layers(config_.cascades.cascades)
+                                                       .set_usage(vk::ImageUsageFlagBits::eStorage));
+  cascades_view_ =
+      cascades_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
+}
+
+void Renderer2D::update_descriptor()
+{
+  DescriptorWriter writer{};
+  writer.add_image(0, SceneImage, vk::DescriptorType::eStorageImage, scene_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(0, JFAImage, vk::DescriptorType::eStorageImage, jfa_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(0, SDFImage, vk::DescriptorType::eStorageImage, sdf_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(0, CascadesImage, vk::DescriptorType::eStorageImage, cascades_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(2, LightTexture, vk::DescriptorType::eSampledImage, light_views_[0].get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal);
+
+  for (uint32_t i = 0; i < light_mips_; i++) {
+    writer.add_image(0, LightImage + i, vk::DescriptorType::eStorageImage, light_views_[i].get(),
+                     vk::ImageLayout::eGeneral);
+  }
+
+  writer.update(device_.get(), bindless_descriptor_set_);
 }
 
 VkSurfaceKHR Renderer2D::create_surface(const Window& window, const Instance& instance)

@@ -6,7 +6,6 @@
 #include "backend/instance.hpp"
 #include "backend/swapchain.hpp"
 #include "framework/context.hpp"
-#include "fwrk_allocator.hpp"
 
 class Window;
 class EventDispatcher;
@@ -43,6 +42,14 @@ struct Material {
   float paddington{};
 };
 
+class EmptyAllocator : public fwrk::Allocator {
+public:
+  std::optional<fwrk::PhysicalImage> create_image(const fwrk::ImageCreateInfo&) override { return std::nullopt; }
+  std::optional<fwrk::PhysicalBuffer> create_buffer(const fwrk::BufferCreateInfo&) override { return std::nullopt; }
+  void destroy_image(fwrk::PhysicalImage&) override {}
+  void destroy_buffer(fwrk::PhysicalBuffer&) override {};
+};
+
 class Renderer2D {
 public:
   Renderer2D(Window& window, EventDispatcher& event_dispatcher, ResourceManager<ShaderResource>& resource_manager,
@@ -62,13 +69,12 @@ private:
 
   void draw_pass(vk::CommandBuffer cmd);
   void convert_pass(vk::CommandBuffer cmd);
-  void jfa_pass(vk::CommandBuffer cmd, fwrk::ResourceID jfa_1, fwrk::ResourceID jfa_2);
+  void jfa_pass(vk::CommandBuffer cmd);
   void sdf_pass(vk::CommandBuffer cmd);
-  void cascades_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
-                     float base_probe_spacing, uint32_t base_probe_dir_count, float base_probe_length);
-  void merge_pass(vk::CommandBuffer cmd, uint32_t cascade_width, uint32_t cascade_height, uint32_t probe_size,
-                  fwrk::ResourceID cascades);
-  void composite_pass(vk::CommandBuffer cmd, float spacing, uint32_t probe_size);
+  void cascades_pass(vk::CommandBuffer cmd);
+  void merge_pass(vk::CommandBuffer cmd);
+  void light_pass(vk::CommandBuffer cmd);
+  void pull_push_pass(vk::CommandBuffer cmd);
   void blit_pass(vk::CommandBuffer cmd);
   void imgui_pass(vk::CommandBuffer cmd);
 
@@ -84,6 +90,8 @@ private:
   Swapchain swapchain_;
   std::array<Frame, frames_in_flight> frames_;
   std::vector<vk::UniqueSemaphore> submit_semaphores_;
+  EmptyAllocator empty_allocator_;
+  fwrk::Context context_;
 
   vk::UniquePipelineLayout draw_pipeline_layout_;
   vk::UniqueShaderModule draw_shader_module_;
@@ -109,9 +117,14 @@ private:
   vk::UniqueShaderModule merge_shader_module_;
   vk::UniquePipeline merge_pipeline_;
 
-  vk::UniquePipelineLayout composite_pipeline_layout_;
-  vk::UniqueShaderModule composite_shader_module_;
-  vk::UniquePipeline composite_pipeline_;
+  vk::UniquePipelineLayout light_pipeline_layout_;
+  vk::UniqueShaderModule light_shader_module_;
+  vk::UniquePipeline light_pipeline_;
+
+  vk::UniquePipelineLayout pull_push_pipeline_layout_;
+  vk::UniqueShaderModule pull_push_shader_module_;
+  vk::UniquePipeline pull_pipeline_;
+  vk::UniquePipeline push_pipeline_;
 
   vk::UniquePipelineLayout blit_pipeline_layout_;
   vk::UniqueShaderModule blit_shader_module_;
@@ -124,19 +137,34 @@ private:
   vk::UniqueSampler sampler_;
 
   std::optional<Image> scene_image_;
-  vk::UniqueImageView scene_image_view_;
+  vk::UniqueImageView scene_view_;
+  fwrk::ResourceID scene_id_;
+
+  std::optional<Image> jfa_image_;
+  vk::UniqueImageView jfa_view_;
+  fwrk::ResourceID jfa_id_;
+
+  std::optional<Image> sdf_image_;
+  vk::UniqueImageView sdf_view_;
+  fwrk::ResourceID sdf_id_;
+
+  std::optional<Image> light_image_;
+  std::vector<vk::UniqueImageView> light_views_;
+  fwrk::ResourceID light_id_;
+
+  std::optional<Image> cascades_image_;
+  vk::UniqueImageView cascades_view_;
+  fwrk::ResourceID cascades_id_;
 
   std::optional<Buffer> material_buffer_;
   std::optional<Buffer> ubo_;
 
+  std::vector<fwrk::ResourceID> swapchain_imports_;
+  fwrk::ResourceID swapchain_proxy_;
+
   uint32_t current_frame_{};
   uint32_t image_index_{};
 
-  FwrkAllocator fwrk_allocator_;
-  fwrk::Context context_;
-  std::vector<fwrk::ResourceID> swapchain_imports_;
-  fwrk::ResourceID swapchain_proxy_;
-  fwrk::ResourceID scene_image_import_;
   bool should_compile_ = true;
 
   std::vector<Material> materials_;
@@ -144,9 +172,21 @@ private:
   bool should_draw = false;
   std::pair<uint32_t, uint32_t> draw_pos_;
 
-  void import_resources();
+  uint32_t cascades_width_{0};
+  uint32_t cascades_height_{0};
+  uint32_t base_probe_size_{0};
+  float base_probe_spacing_{0.0f};
+  float base_probe_length_{0.0f};
 
-  void create_scene_image();
+  uint32_t light_mips_{0};
+
+  void import_swapchain_images();
+  void import_images();
+
+  void create_images();
+  void create_cascade_image();
+
+  void update_descriptor();
 
   static VkSurfaceKHR create_surface(const Window& window, const Instance& instance);
 };

@@ -1,12 +1,12 @@
 #include "common.slang"
 
 struct PushConstant {
-    uint read_id;
-    uint write_id;
+    uint jfa_id;
+    uint read_idx;
     uint k;
 }
 
-[[vk::binding(0, 0)]] RWTexture2D<int4> storageImagesI[];
+[[vk::binding(0, 0)]] RWTexture2DArray<int4> storageImageArrayI[];
 [[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
 static const int2 directions[] = {
@@ -36,7 +36,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
         int2 dir = directions[i] * int2(pc.k);
         int2 coord = local + dir;
         if (any(coord >= int2(ubo.scene_width, ubo.scene_height)) || any(coord < int2(0))) continue;
-        int4 offset_point = storageImagesI[pc.read_id].Load(coord);
+        int4 offset_point = storageImageArrayI[pc.jfa_id].Load(int3(coord, pc.read_idx));
         if (offset_point.x >= 0) {
             int2 d = offset_point.xy - local;
             int dist2 = d.x * d.x + d.y * d.y;
@@ -55,5 +55,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
         }
     }
 
-    storageImagesI[pc.write_id].Store(local, int4(closest_seed, closest_seed_empty));
+    storageImageArrayI[pc.jfa_id].Store(int3(local, 1 - pc.read_idx), int4(closest_seed, closest_seed_empty));
 }

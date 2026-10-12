@@ -2,19 +2,14 @@
 
 struct PushConstant {
     uint cascades_id;
-    uint composite_id;
+    uint light_id;
     uint sdf_id;
-    uint jfa_id;
     float spacing;
     uint probe_size;
 }
 
 [[vk::binding(0, 0)]] RWTexture2DArray<float4> storageImageArraysF[];
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
-[[vk::binding(0, 0)]] RWTexture2D<uint4> storageImagesU[];
-[[vk::binding(0, 0)]] RWTexture2D<int4> storageImagesI[];
-
-[[vk::binding(1, 0)]] StructuredBuffer<Material> storageBuffers[];
 [[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
 static const int2 probe_offsets[] = {
@@ -65,21 +60,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     int2 local = int2(dispatchThreadID.xy);
     UBO ubo = uniformBuffers[0];
     if (any(local >= int2(ubo.scene_width, ubo.scene_height))) return;
-    uint8_t mat_id = uint8_t(storageImagesU[0].Load(local).x);
-    Material material = storageBuffers[0][mat_id];
+
 
     float2 center = float2(local) + 0.5;
-    bool solid = storageImagesF[pc.sdf_id].Load(local).x < 0.1;
+    float3 emitted = irradiance(center, pc);
+    bool inside = storageImagesF[pc.sdf_id].Load(int2(local)).x < 0.1;
 
-    float3 emitted;
-    if (solid) {
-        int2 nearest_empty = storageImagesI[pc.jfa_id].Load(local).zw;
-        emitted = nearest_empty.x >= 0 ? irradiance(float2(nearest_empty) + 0.5, pc) : 0.0;
-    } else {
-        emitted = irradiance(center, pc);
-    }
-
-    float3 color = material.radiance + material.base_color * emitted;
-
-    storageImagesF[pc.composite_id].Store(local, float4(color, 1.0));
+    storageImagesF[pc.light_id].Store(local, inside ? float4(0.0) : float4(emitted, 1.0));
 }

@@ -4,7 +4,7 @@ struct PushConstant {
     uint jfa_id;
 }
 
-[[vk::binding(0, 0)]] RWTexture2D<int4> storageImagesI[];
+[[vk::binding(0, 0)]] RWTexture2DArray<int4> storageImageArrayI[];
 [[vk::binding(0, 0)]] RWTexture2D<uint4> storageImagesU[];
 [[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
@@ -18,8 +18,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     uint drawn = storageImagesU[0].Load(local).x;
 
     if (drawn >= 1) {
-        storageImagesI[pc.jfa_id].Store(local, int4(local, -1, -1));
+        storageImageArrayI[pc.jfa_id].Store(int3(local, 0), int4(local, -1, -1));
         return;
     }
-    storageImagesI[pc.jfa_id].Store(local, int4(-1, -1, local));
+    storageImageArrayI[pc.jfa_id].Store(int3(local, 0), int4(-1, -1, local));
 }
