@@ -34,6 +34,7 @@ namespace {
   struct SDFPushConstant {
     uint32_t jfa_id;
     uint32_t sdf_id;
+    uint32_t layer;
   };
 
   struct CascadesPushConstant {
@@ -649,38 +650,37 @@ void Renderer2D::jfa_pass(vk::CommandBuffer cmd)
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
 
+  auto barrier =
+      vk::ImageMemoryBarrier2{}
+          .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+          .setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
+          .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+          .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite)
+          .setOldLayout(vk::ImageLayout::eGeneral)
+          .setNewLayout(vk::ImageLayout::eGeneral)
+          .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
+          .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
+          .setSubresourceRange(
+              {vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers})
+          .setImage(jfa_image_->image());
 
-  auto barrier = vk::ImageMemoryBarrier2{}
-                     .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
-                     .setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
-                     .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
-                     .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageRead)
-                     .setOldLayout(vk::ImageLayout::eGeneral)
-                     .setNewLayout(vk::ImageLayout::eGeneral)
-                     .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
-                     .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
-                     .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
-                     .setImage(jfa_image_->image());
+  const auto k_start = std::max(config_.scene_size.width, config_.scene_size.height);
+  const auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
 
   const uint32_t gx = (config_.scene_size.width + 7) / 8;
   const uint32_t gy = (config_.scene_size.height + 7) / 8;
-
-  bool use_jfa_2 = false;
-  const auto k_start = std::max(config_.scene_size.width, config_.scene_size.height);
-  const auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
+  uint32_t read = 0;
   for (uint32_t i = 1; i <= k_count; i++) {
-    const JFAPushConstant push_constant{
-        .jfa_id = JFAImage, .read_idx = static_cast<uint32_t>(use_jfa_2), .k = k_start >> i};
+    const JFAPushConstant push_constant{.jfa_id = JFAImage, .read_idx = read, .k = k_start >> i};
     cmd.pushConstants(jfa_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant),
                       &push_constant);
 
     cmd.dispatch(gx, gy, 1);
+    cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
 
-    if (i > 1) {
-      cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
-    }
-    use_jfa_2 = !use_jfa_2;
+    read = 1 - read;
   }
+  final_jfa_ = read;
 }
 
 void Renderer2D::sdf_pass(vk::CommandBuffer cmd)
@@ -689,10 +689,7 @@ void Renderer2D::sdf_pass(vk::CommandBuffer cmd)
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, sdf_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
 
-  constexpr SDFPushConstant push_constant{
-      .jfa_id = JFAImage,
-      .sdf_id = SDFImage,
-  };
+  const SDFPushConstant push_constant{.jfa_id = JFAImage, .sdf_id = SDFImage, .layer = final_jfa_};
 
   cmd.pushConstants(sdf_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant),
                     &push_constant);

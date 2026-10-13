@@ -185,6 +185,8 @@ private:
   bool should_draw = false;
   std::pair<uint32_t, uint32_t> draw_pos_;
 
+  uint32_t final_jfa_{0};
+
   uint32_t cascades_width_{0};
   uint32_t cascades_height_{0};
   uint32_t base_probe_size_{0};

@@ -3,6 +3,7 @@
 struct PushConstant {
     uint jfa_id;
     uint sdf_id;
+    uint layer;
 }
 
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
@@ -16,7 +17,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     UBO ubo = uniformBuffers[0];
     if (any(local >= int2(ubo.scene_width, ubo.scene_height))) return;
 
-    int4 seed = storageImageArrayI[pc.jfa_id].Load(int3(local, 1));
+    int4 seed = storageImageArrayI[pc.jfa_id].Load(int3(local, pc.layer));
     bool inside = all(seed.xy == local);
     int2 target = inside ? seed.zw : seed.xy;
 

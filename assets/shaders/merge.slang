@@ -48,9 +48,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     int2 dir = local % probe_size;
     int dir_index = dir.y * probe_size + dir.x;
 
-    float2 probe_center = (float2(probe) + 0.5) * float(probe_size);
     int probe_size_n1 = int(pc.base_probe_size) << (pc.cascade + 1);
 
+    float2 probe_center = (float2(probe) + 0.5) * float(probe_size);
     float4 weights = float4(0.0);
     int2 base_index = get_base_index(probe_center, float2(probe_size_n1), weights);
 
