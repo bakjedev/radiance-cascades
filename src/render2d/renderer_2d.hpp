@@ -76,7 +76,6 @@ private:
   void jfa_pass(vk::CommandBuffer cmd);
   void sdf_pass(vk::CommandBuffer cmd);
   void cascades_pass(vk::CommandBuffer cmd);
-  void merge_pass(vk::CommandBuffer cmd);
   void light_pass(vk::CommandBuffer cmd);
   void pull_push_pass(vk::CommandBuffer cmd);
   void composite_pass(vk::CommandBuffer cmd);
@@ -117,10 +116,6 @@ private:
   vk::UniquePipelineLayout cascades_pipeline_layout_;
   vk::UniqueShaderModule cascades_shader_module_;
   vk::UniquePipeline cascades_pipeline_;
-
-  vk::UniquePipelineLayout merge_pipeline_layout_;
-  vk::UniqueShaderModule merge_shader_module_;
-  vk::UniquePipeline merge_pipeline_;
 
   vk::UniquePipelineLayout light_pipeline_layout_;
   vk::UniqueShaderModule light_shader_module_;

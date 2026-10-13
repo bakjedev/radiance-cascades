@@ -51,7 +51,6 @@ shaders = [
     'jfa.slang',
     'sdf.slang',
     'cascades.slang',
-    'merge.slang',
     'light.slang',
     'composite.slang',
     'blit.slang',

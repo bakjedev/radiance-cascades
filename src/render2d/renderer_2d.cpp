@@ -42,7 +42,8 @@ namespace {
     uint32_t cascades_id;
     uint32_t cascade_width;
     uint32_t cascade_height;
-    uint32_t cascade;
+    uint32_t cascade_idx;
+    uint32_t cascade_count;
     uint32_t base_probe_size;
     float base_spacing;
     uint32_t base_probe_dir_count;
@@ -52,14 +53,6 @@ namespace {
   struct UBOData {
     uint32_t image_width;
     uint32_t image_height;
-  };
-
-  struct MergePushConstant {
-    uint32_t cascade_id;
-    uint32_t cascade;
-    uint32_t cascade_width;
-    uint32_t cascade_height;
-    uint32_t base_probe_size;
   };
 
   struct LightPushConstant {
@@ -313,24 +306,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     cascades_pipeline_ = create_compute_pipeline(device_.get(), cascades_pipeline_desc);
   }
 
-  // Merge pipeline
-  {
-    vk::PushConstantRange merge_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(MergePushConstant)};
-
-    auto merge_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("merge.slang.spv", ShaderResourceLoader{&file_system_});
-
-    merge_shader_module_ = create_shader_module(device_.get(), merge_shader_resource->code);
-
-    merge_pipeline_layout_ =
-        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&merge_push, 1});
-
-    const ComputePipelineDesc merge_pipeline_desc{.module = merge_shader_module_.get(),
-                                                  .layout = merge_pipeline_layout_.get()};
-
-    merge_pipeline_ = create_compute_pipeline(device_.get(), merge_pipeline_desc);
-  }
-
   // Light pipeline
   {
     vk::PushConstantRange light_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(LightPushConstant)};
@@ -564,10 +539,6 @@ void Renderer2D::compile()
       .set_storage_image_write({.resource = {.id = cascades_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { cascades_pass(cmd); });
 
-  graph.add_compute_pass("Merge")
-      .set_storage_image_write({.resource = {.id = cascades_id_}})
-      .set_execute([this](vk::CommandBuffer cmd) { merge_pass(cmd); });
-
   graph.add_compute_pass("Light")
       .set_storage_image_read({.resource = {.id = cascades_id_}})
       .set_storage_image_write({.resource = {.id = light_id_}, .level_count = 1})
@@ -705,47 +676,6 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd)
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, cascades_pipeline_layout_.get(), 0, 1,
                          &bindless_descriptor_set_, 0, nullptr);
 
-  CascadesPushConstant push_constant{.sdf_id = SDFImage,
-                                     .cascades_id = CascadesImage,
-                                     .cascade_width = cascades_width_,
-                                     .cascade_height = cascades_height_,
-                                     .cascade = 0,
-                                     .base_probe_size = base_probe_size_,
-                                     .base_spacing = base_probe_spacing_,
-                                     .base_probe_dir_count = base_probe_size_ * base_probe_size_,
-                                     .base_length = base_probe_length_};
-
-  const uint32_t gx = (cascades_width_ + 7) / 8;
-  const uint32_t gy = (cascades_height_ + 7) / 8;
-
-  for (uint32_t i = 0; i < config_.cascades.cascades; i++) {
-    push_constant.cascade = i;
-
-    cmd.pushConstants(cascades_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
-                      sizeof(CascadesPushConstant), &push_constant);
-
-
-    cmd.dispatch(gx, gy, 1);
-  }
-}
-
-void Renderer2D::merge_pass(vk::CommandBuffer cmd)
-{
-  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, merge_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, merge_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
-                         0, nullptr);
-
-  const uint32_t gx = (cascades_width_ + 7) / 8;
-  const uint32_t gy = (cascades_height_ + 7) / 8;
-
-  MergePushConstant push_constant{
-      .cascade_id = CascadesImage,
-      .cascade = 0,
-      .cascade_width = cascades_width_,
-      .cascade_height = cascades_height_,
-      .base_probe_size = base_probe_size_,
-  };
-
   auto barrier =
       vk::ImageMemoryBarrier2{}
           .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
@@ -756,13 +686,31 @@ void Renderer2D::merge_pass(vk::CommandBuffer cmd)
           .setNewLayout(vk::ImageLayout::eGeneral)
           .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
           .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
-          .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, vk::RemainingArrayLayers})
+          .setSubresourceRange(
+              {vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers})
           .setImage(cascades_image_->image());
 
-  for (uint32_t i = config_.cascades.cascades - 1; i-- > 0;) {
-    push_constant.cascade = i;
-    cmd.pushConstants(merge_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(MergePushConstant),
-                      &push_constant);
+
+  CascadesPushConstant push_constant{.sdf_id = SDFImage,
+                                     .cascades_id = CascadesImage,
+                                     .cascade_width = cascades_width_,
+                                     .cascade_height = cascades_height_,
+                                     .cascade_idx = 0,
+                                     .cascade_count = config_.cascades.cascades,
+                                     .base_probe_size = base_probe_size_,
+                                     .base_spacing = base_probe_spacing_,
+                                     .base_probe_dir_count = base_probe_size_ * base_probe_size_,
+                                     .base_length = base_probe_length_};
+
+  const uint32_t gx = (cascades_width_ + 7) / 8;
+  const uint32_t gy = (cascades_height_ + 7) / 8;
+
+  for (uint32_t i = config_.cascades.cascades; i-- > 0;) {
+    push_constant.cascade_idx = i;
+
+    cmd.pushConstants(cascades_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                      sizeof(CascadesPushConstant), &push_constant);
+
 
     cmd.dispatch(gx, gy, 1);
     cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
