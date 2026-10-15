@@ -40,7 +40,7 @@ float4 trace(float2 start, float2 end, UBO ubo, PushConstant pc) {
         int2 coord = int2(floor(point));
         if (any(coord >= int2(ubo.scene_width, ubo.scene_height)) || any(coord < int2(0))) break;
         float distance = storageImagesF[pc.sdf_id].Load(coord).x;
-        if (distance < 0.1) {
+        if (distance < EPSILON) {
             uint8_t mat_id = uint8_t(storageImagesU[0].Load(coord).x);
             Material mat = storageBuffers[0][mat_id];
             float4 result = float4(mat.radiance, 0.0);

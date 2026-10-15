@@ -40,7 +40,7 @@ float3 irradiance(float2 pos, PushConstant pc) {
         int2 index = base_index + offset;
 
         float2 coord = (float2(index) + 0.5) * pc.spacing;
-        if (storageImagesF[pc.sdf_id].Load(int2(coord)).x < 0.1) continue;
+        if (storageImagesF[pc.sdf_id].Load(int2(coord)).x < EPSILON) continue;
 
         float3 sub_sum = 0.0;
         for (int j = 0; j < dir_count; j++)
@@ -62,7 +62,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     UBO ubo = uniformBuffers[0];
     if (any(local >= int2(ubo.scene_width, ubo.scene_height))) return;
 
-    bool inside = storageImagesF[pc.sdf_id].Load(int2(local)).x < 0.1;
+    bool inside = storageImagesF[pc.sdf_id].Load(int2(local)).x < EPSILON;
     if (inside) {
         storageImagesF[pc.light_id].Store(local, float4(0.0));
         return;

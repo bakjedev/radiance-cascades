@@ -39,9 +39,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     
     Material mat = storageBuffers[0][mat_id];
     float dist = storageImagesF[pc.sdf_id].Load(local).x;
-    float depth = max(-dist, 0.0);
 
-    float rim = exp(-depth / pc.rim);
+    float rim = exp(min(dist, 0.0) / pc.rim);
     float3 color = mat.base_color * light * rim + mat.radiance;
 
     storageImagesF[pc.composite_id].Store(local, float4(color, 1.0));
