@@ -121,10 +121,11 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // ----------------------------------------
   // Buffers
   // ----------------------------------------
-  material_buffer_.emplace(device_.get_allocator(),
+  material_buffer_.emplace(device_.get_allocator(), device_.get(),
                            BufferDesc{.alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}
                                .set_size(sizeof(Material) * 256)
-                               .set_usage(vk::BufferUsageFlagBits::eStorageBuffer));
+                               .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
+                               .set_debug_name("Material buffer"));
 
   materials_.push_back(Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {0.0f, 0.0f, 0.0f}});
   materials_.push_back(Material{.color = {1.0f, 1.0f, 1.0f}, .radiance = {2.0f, 2.0f, 2.0f}});
@@ -139,10 +140,11 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   vmaUnmapMemory(device_.get_allocator(), material_buffer_->allocation());
 
 
-  ubo_.emplace(device_.get_allocator(),
+  ubo_.emplace(device_.get_allocator(), device_.get(),
                BufferDesc{.alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}
                    .set_size(sizeof(UBOData))
-                   .set_usage(vk::BufferUsageFlagBits::eUniformBuffer));
+                   .set_usage(vk::BufferUsageFlagBits::eUniformBuffer)
+                   .set_debug_name("UBO"));
 
   // ----------------------------------------
   // Sampler
@@ -218,6 +220,13 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // Pipelines
   // ----------------------------------------
 
+  std::vector<vk::DebugUtilsObjectNameInfoEXT> debug_object_names;
+  debug_object_names.reserve(10);
+
+  auto handle_to_uint64_t = []<typename T>(T handle) -> uint64_t {
+    return reinterpret_cast<uint64_t>(static_cast<T::CType>(handle));
+  };
+
   // Draw pipeline
   {
     vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant)};
@@ -234,6 +243,9 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                  .layout = draw_pipeline_layout_.get()};
 
     draw_pipeline_ = create_compute_pipeline(device_.get(), draw_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(draw_pipeline_.get()),
+                                    "Draw Pipeline");
   }
 
   // Convert pipeline
@@ -252,6 +264,9 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                     .layout = convert_pipeline_layout_.get()};
 
     convert_pipeline_ = create_compute_pipeline(device_.get(), convert_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(convert_pipeline_.get()),
+                                    "Convert Pipeline");
   }
 
   // JFA pipeline
@@ -270,6 +285,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                 .layout = jfa_pipeline_layout_.get()};
 
     jfa_pipeline_ = create_compute_pipeline(device_.get(), jfa_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(jfa_pipeline_.get()), "JFA Pipeline");
   }
 
   // SDF pipeline
@@ -288,6 +305,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                 .layout = sdf_pipeline_layout_.get()};
 
     sdf_pipeline_ = create_compute_pipeline(device_.get(), sdf_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(sdf_pipeline_.get()), "SDF Pipeline");
   }
 
   // Cascades pipeline
@@ -306,6 +325,9 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                      .layout = cascades_pipeline_layout_.get()};
 
     cascades_pipeline_ = create_compute_pipeline(device_.get(), cascades_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(cascades_pipeline_.get()),
+                                    "Cascades Pipeline");
   }
 
   // Light pipeline
@@ -324,6 +346,9 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                   .layout = light_pipeline_layout_.get()};
 
     light_pipeline_ = create_compute_pipeline(device_.get(), light_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(light_pipeline_.get()),
+                                    "Light Pipeline");
   }
 
   // Push pull pipelines
@@ -345,6 +370,11 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     const ComputePipelineDesc push_pipeline_desc{
         .module = pull_push_shader_module_.get(), .entry = "push", .layout = pull_push_pipeline_layout_.get()};
     push_pipeline_ = create_compute_pipeline(device_.get(), push_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(pull_pipeline_.get()),
+                                    "Pull Pipeline");
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(push_pipeline_.get()),
+                                    "Push Pipeline");
   }
 
   // Composite pipeline
@@ -363,6 +393,9 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
                                                       .layout = composite_pipeline_layout_.get()};
 
     composite_pipeline_ = create_compute_pipeline(device_.get(), composite_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(composite_pipeline_.get()),
+                                    "Composite Pipeline");
   }
 
   // Blit pipeline
@@ -389,6 +422,15 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     blit_pipeline_desc.layout = blit_pipeline_layout_.get();
 
     blit_pipeline_ = create_graphics_pipeline(device_.get(), blit_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(blit_pipeline_.get()),
+                                    "Blit Pipeline");
+  }
+
+  for (auto& info: debug_object_names) {
+    if (device_.get().setDebugUtilsObjectNameEXT(&info) != vk::Result::eSuccess) {
+      throw std::runtime_error("Failed to set object name on pipeline");
+    }
   }
 
   // ----------------------------------------
@@ -542,7 +584,7 @@ void Renderer2D::compile()
                             .set_storage_image_write({.resource = {.id = cascades_id_}});
 
     if (i != 0) cascade_pass.set_storage_image_read({.resource = {.id = light_id_}});
-    
+
     cascade_pass.set_execute([this, i](vk::CommandBuffer cmd) { cascades_pass(cmd, i == 0); });
 
     graph.add_compute_pass("Light")
@@ -610,7 +652,7 @@ void Renderer2D::convert_pass(vk::CommandBuffer cmd)
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, convert_pipeline_layout_.get(), 0, 1,
                          &bindless_descriptor_set_, 0, nullptr);
 
-  const ConvertPushConstant push_constant{
+  constexpr ConvertPushConstant push_constant{
       .jfa_id = JFAImage,
   };
 
@@ -642,6 +684,8 @@ void Renderer2D::jfa_pass(vk::CommandBuffer cmd)
               {vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers})
           .setImage(jfa_image_->image());
 
+  vk::DebugUtilsLabelEXT debug_label{{}, {1.0f, 1.0f, 1.0f, 1.0f}};
+
   const auto k_start = std::max(config_.scene_size.width, config_.scene_size.height);
   const auto k_count = k_start <= 1 ? 0 : static_cast<uint32_t>(std::bit_width(k_start - 1));
 
@@ -649,6 +693,10 @@ void Renderer2D::jfa_pass(vk::CommandBuffer cmd)
   const uint32_t gy = (config_.scene_size.height + 7) / 8;
   uint32_t read = 0;
   for (uint32_t i = 1; i <= k_count; i++) {
+    std::string debug_name = std::format("JFA Iter {}/{}, r: {}", i, k_count, read);
+    debug_label.pLabelName = debug_name.c_str();
+    cmd.beginDebugUtilsLabelEXT(*debug_label);
+
     const JFAPushConstant push_constant{.jfa_id = JFAImage, .read_idx = read, .k = k_start >> i};
     cmd.pushConstants(jfa_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant),
                       &push_constant);
@@ -657,6 +705,7 @@ void Renderer2D::jfa_pass(vk::CommandBuffer cmd)
     cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
 
     read = 1 - read;
+    cmd.endDebugUtilsLabelEXT();
   }
   final_jfa_ = read;
 }
@@ -697,6 +746,7 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
               {vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers})
           .setImage(cascades_image_->image());
 
+  vk::DebugUtilsLabelEXT debug_label{{}, {1.0f, 1.0f, 1.0f, 1.0f}};
 
   CascadesPushConstant push_constant{.sdf_id = SDFImage,
                                      .cascades_id = CascadesImage,
@@ -715,6 +765,10 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
   const uint32_t gy = (cascades_height_ + 7) / 8;
 
   for (uint32_t i = config_.cascades.cascades; i-- > 0;) {
+    std::string debug_name = std::format("Cascade {}", i);
+    debug_label.pLabelName = debug_name.c_str();
+    cmd.beginDebugUtilsLabelEXT(*debug_label);
+
     push_constant.cascade_idx = i;
 
     cmd.pushConstants(cascades_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
@@ -723,6 +777,7 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
 
     cmd.dispatch(gx, gy, 1);
     cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+    cmd.endDebugUtilsLabelEXT();
   }
 }
 
@@ -766,9 +821,15 @@ void Renderer2D::pull_push_pass(vk::CommandBuffer cmd)
                      .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
                      .setImage(light_image_->image());
 
+  vk::DebugUtilsLabelEXT debug_label{{}, {1.0f, 1.0f, 1.0f, 1.0f}};
+
   PullPushConstant push_constant{.read_id = 0, .write_id = 0, .width = 0, .height = 0};
 
   for (uint32_t i = 1; i < light_mips_; i++) {
+    std::string debug_name = std::format("Pull to {}", i);
+    debug_label.pLabelName = debug_name.c_str();
+    cmd.beginDebugUtilsLabelEXT(*debug_label);
+
     push_constant.read_id = LightImage + i - 1;
     push_constant.write_id = LightImage + i;
     push_constant.width = config_.scene_size.width >> i;
@@ -785,6 +846,7 @@ void Renderer2D::pull_push_pass(vk::CommandBuffer cmd)
     const uint32_t gx = (push_constant.width + 7) / 8;
     const uint32_t gy = (push_constant.height + 7) / 8;
     cmd.dispatch(gx, gy, 1);
+    cmd.endDebugUtilsLabelEXT();
   }
 
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, push_pipeline_.get());
@@ -796,6 +858,10 @@ void Renderer2D::pull_push_pass(vk::CommandBuffer cmd)
   cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barriers));
 
   for (uint32_t i = light_mips_; i-- > 1;) {
+    std::string debug_name = std::format("Push from {}", i);
+    debug_label.pLabelName = debug_name.c_str();
+    cmd.beginDebugUtilsLabelEXT(*debug_label);
+
     push_constant.read_id = LightImage + i;
     push_constant.write_id = LightImage + i - 1;
     push_constant.width = config_.scene_size.width >> (i - 1);
@@ -812,6 +878,7 @@ void Renderer2D::pull_push_pass(vk::CommandBuffer cmd)
     const uint32_t gx = (push_constant.width + 7) / 8;
     const uint32_t gy = (push_constant.height + 7) / 8;
     cmd.dispatch(gx, gy, 1);
+    cmd.endDebugUtilsLabelEXT();
   }
 }
 
@@ -1013,34 +1080,43 @@ void Renderer2D::create_images()
 {
   device_.get().waitIdle();
 
-  scene_image_.emplace(device_.get_allocator(), ImageDesc{}
-                                                    .set_extent(config_.scene_size.width, config_.scene_size.height)
-                                                    .set_format(vk::Format::eR8Uint)
-                                                    .set_usage(vk::ImageUsageFlagBits::eStorage));
+  scene_image_.emplace(device_.get_allocator(), device_.get(),
+                       ImageDesc{}
+                           .set_extent(config_.scene_size.width, config_.scene_size.height)
+                           .set_format(vk::Format::eR8Uint)
+                           .set_usage(vk::ImageUsageFlagBits::eStorage)
+                           .set_debug_name("Scene Image"));
 
-  jfa_image_.emplace(device_.get_allocator(), ImageDesc{}
-                                                  .set_extent(config_.scene_size.width, config_.scene_size.height)
-                                                  .set_format(vk::Format::eR32G32B32A32Sint)
-                                                  .set_layers(2)
-                                                  .set_usage(vk::ImageUsageFlagBits::eStorage));
+  jfa_image_.emplace(device_.get_allocator(), device_.get(),
+                     ImageDesc{}
+                         .set_extent(config_.scene_size.width, config_.scene_size.height)
+                         .set_format(vk::Format::eR32G32B32A32Sint)
+                         .set_layers(2)
+                         .set_usage(vk::ImageUsageFlagBits::eStorage)
+                         .set_debug_name("JFA Images"));
 
-  sdf_image_.emplace(device_.get_allocator(), ImageDesc{}
-                                                  .set_extent(config_.scene_size.width, config_.scene_size.height)
-                                                  .set_format(vk::Format::eR32Sfloat)
-                                                  .set_usage(vk::ImageUsageFlagBits::eStorage));
+  sdf_image_.emplace(device_.get_allocator(), device_.get(),
+                     ImageDesc{}
+                         .set_extent(config_.scene_size.width, config_.scene_size.height)
+                         .set_format(vk::Format::eR32Sfloat)
+                         .set_usage(vk::ImageUsageFlagBits::eStorage)
+                         .set_debug_name("SDF Image"));
 
   light_mips_ = static_cast<uint32_t>(std::ceil(std::log2(config_.scene_size.width)));
-  light_image_.emplace(device_.get_allocator(), ImageDesc{}
-                                                    .set_extent(config_.scene_size.width, config_.scene_size.height)
-                                                    .set_mips(light_mips_)
-                                                    .set_format(vk::Format::eR16G16B16A16Sfloat)
-                                                    .set_usage(vk::ImageUsageFlagBits::eStorage));
+  light_image_.emplace(device_.get_allocator(), device_.get(),
+                       ImageDesc{}
+                           .set_extent(config_.scene_size.width, config_.scene_size.height)
+                           .set_mips(light_mips_)
+                           .set_format(vk::Format::eR16G16B16A16Sfloat)
+                           .set_usage(vk::ImageUsageFlagBits::eStorage)
+                           .set_debug_name("Light Image"));
 
-  composite_image_.emplace(device_.get_allocator(),
+  composite_image_.emplace(device_.get_allocator(), device_.get(),
                            ImageDesc{}
                                .set_extent(config_.scene_size.width, config_.scene_size.height)
                                .set_format(vk::Format::eR16G16B16A16Sfloat)
-                               .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled));
+                               .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
+                               .set_debug_name("Composite Image"));
 
 
   scene_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
@@ -1076,11 +1152,13 @@ void Renderer2D::create_cascade_image()
   base_probe_spacing_ = config_.cascades.base_spacing;
   base_probe_length_ = config_.cascades.base_length;
 
-  cascades_image_.emplace(device_.get_allocator(), ImageDesc{}
-                                                       .set_extent(cascades_width_, cascades_height_)
-                                                       .set_format(vk::Format::eR16G16B16A16Sfloat)
-                                                       .set_layers(config_.cascades.cascades)
-                                                       .set_usage(vk::ImageUsageFlagBits::eStorage));
+  cascades_image_.emplace(device_.get_allocator(), device_.get(),
+                          ImageDesc{}
+                              .set_extent(cascades_width_, cascades_height_)
+                              .set_format(vk::Format::eR16G16B16A16Sfloat)
+                              .set_layers(config_.cascades.cascades)
+                              .set_usage(vk::ImageUsageFlagBits::eStorage)
+                              .set_debug_name("Cascade Images"));
   cascades_view_ =
       cascades_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
 }

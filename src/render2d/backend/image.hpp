@@ -15,6 +15,8 @@ struct ImageDesc {
   VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO;
   VmaAllocationCreateFlags alloc_flags{};
 
+  std::string debug_name{};
+
   ImageDesc& set_format(const vk::Format fmt)
   {
     format = fmt;
@@ -64,6 +66,12 @@ struct ImageDesc {
     tiling = image_tiling;
     return *this;
   }
+
+  ImageDesc& set_debug_name(std::string name)
+  {
+    debug_name = std::move(name);
+    return *this;
+  }
 };
 
 inline vk::ImageAspectFlags get_aspect_for_format(const vk::Format format)
@@ -88,7 +96,10 @@ class Image {
 public:
   Image() = default;
 
-  Image(VmaAllocator allocator, const ImageDesc& desc) : allocator_(allocator) { create(desc); }
+  Image(VmaAllocator allocator, vk::Device device, const ImageDesc& desc) : allocator_(allocator), device_(device)
+  {
+    create(desc);
+  }
 
   ~Image() { destroy(); }
 
@@ -155,6 +166,18 @@ private:
         VK_SUCCESS) {
       throw std::runtime_error("Failed to create image with VMA");
     }
+
+    if (!desc.debug_name.empty()) {
+      vk::DebugUtilsObjectNameInfoEXT name_info{};
+      name_info.setObjectType(vk::ObjectType::eImage);
+      name_info.setObjectHandle(reinterpret_cast<uint64_t>(image_c));
+      name_info.setPObjectName(desc.debug_name.c_str());
+
+      if (device_.setDebugUtilsObjectNameEXT(&name_info) != vk::Result::eSuccess) {
+        throw std::runtime_error("Failed to set object name on image");
+      }
+    }
+
     image_ = image_c;
     format_ = desc.format;
     extent_ = desc.extent;
@@ -183,6 +206,7 @@ private:
 
 
   VmaAllocator allocator_ = nullptr;
+  vk::Device device_ = nullptr;
 
   vk::Image image_ = nullptr;
   VmaAllocation allocation_ = nullptr;

@@ -10,6 +10,8 @@ struct BufferDesc {
   VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO;
   VmaAllocationCreateFlags alloc_flags{};
 
+  std::string debug_name{};
+
   BufferDesc& set_flags(const vk::BufferCreateFlags buffer_flags)
   {
     flags = buffer_flags;
@@ -27,13 +29,22 @@ struct BufferDesc {
     usage = buffer_usage;
     return *this;
   }
+
+  BufferDesc& set_debug_name(std::string name)
+  {
+    debug_name = std::move(name);
+    return *this;
+  }
 };
 
 class Buffer {
 public:
   Buffer() = default;
 
-  Buffer(VmaAllocator allocator, const BufferDesc& desc) : allocator_(allocator) { create(desc); }
+  Buffer(VmaAllocator allocator, vk::Device device, const BufferDesc& desc) : allocator_(allocator), device_(device)
+  {
+    create(desc);
+  }
 
   ~Buffer() { destroy(); }
 
@@ -72,6 +83,18 @@ private:
         VK_SUCCESS) {
       throw std::runtime_error("Failed to create buffer with VMA");
     }
+
+    if (!desc.debug_name.empty()) {
+      vk::DebugUtilsObjectNameInfoEXT name_info{};
+      name_info.setObjectType(vk::ObjectType::eBuffer);
+      name_info.setObjectHandle(reinterpret_cast<uint64_t>(buffer_c));
+      name_info.setPObjectName(desc.debug_name.c_str());
+
+      if (device_.setDebugUtilsObjectNameEXT(&name_info) != vk::Result::eSuccess) {
+        throw std::runtime_error("Failed to set object name on buffer");
+      }
+    }
+
     buffer_ = buffer_c;
     size_ = desc.size;
   }
@@ -93,6 +116,7 @@ private:
   }
 
   VmaAllocator allocator_ = nullptr;
+  vk::Device device_ = nullptr;
 
   vk::Buffer buffer_ = nullptr;
   VmaAllocation allocation_ = nullptr;
