@@ -11,6 +11,8 @@ struct PushConstant {
     float base_spacing;
     uint base_probe_dir_count;
     float base_length;
+    uint light_id;
+    bool first;
 }
 
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
@@ -40,7 +42,12 @@ float4 trace(float2 start, float2 end, UBO ubo, PushConstant pc) {
         float distance = storageImagesF[pc.sdf_id].Load(coord).x;
         if (distance < 0.1) {
             uint8_t mat_id = uint8_t(storageImagesU[0].Load(coord).x);
-            return float4(storageBuffers[0][mat_id].radiance, 0.0);
+            Material mat = storageBuffers[0][mat_id];
+            float4 result = float4(mat.radiance, 0.0);
+            if (!pc.first) {
+                result.xyz += mat.base_color * storageImagesF[pc.light_id].Load(int2(floor(point - dir * 1.5))).xyz;
+            }
+            return result;
         }
         t += distance;
         if (t > len) break;

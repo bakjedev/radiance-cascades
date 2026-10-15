@@ -48,6 +48,8 @@ namespace {
     float base_spacing;
     uint32_t base_probe_dir_count;
     float base_length;
+    uint32_t light_id;
+    bool first;
   };
 
   struct UBOData {
@@ -534,15 +536,20 @@ void Renderer2D::compile()
       .set_storage_image_write({.resource = {.id = sdf_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { sdf_pass(cmd); });
 
-  graph.add_compute_pass("Cascades")
-      .set_storage_image_read({.resource = {.id = sdf_id_}})
-      .set_storage_image_write({.resource = {.id = cascades_id_}})
-      .set_execute([this](vk::CommandBuffer cmd) { cascades_pass(cmd); });
+  for (uint32_t i = 0; i < config_.cascades.bounce; i++) {
+    auto cascade_pass = graph.add_compute_pass("Cascades")
+                            .set_storage_image_read({.resource = {.id = sdf_id_}})
+                            .set_storage_image_write({.resource = {.id = cascades_id_}});
 
-  graph.add_compute_pass("Light")
-      .set_storage_image_read({.resource = {.id = cascades_id_}})
-      .set_storage_image_write({.resource = {.id = light_id_}, .level_count = 1})
-      .set_execute([this](vk::CommandBuffer cmd) { light_pass(cmd); });
+    if (i != 0) cascade_pass.set_storage_image_read({.resource = {.id = light_id_}});
+    
+    cascade_pass.set_execute([this, i](vk::CommandBuffer cmd) { cascades_pass(cmd, i == 0); });
+
+    graph.add_compute_pass("Light")
+        .set_storage_image_read({.resource = {.id = cascades_id_}})
+        .set_storage_image_write({.resource = {.id = light_id_}, .level_count = 1})
+        .set_execute([this](vk::CommandBuffer cmd) { light_pass(cmd); });
+  }
 
   graph.add_compute_pass("Pull Push")
       .set_storage_image_write({.resource = {.id = light_id_}})
@@ -670,7 +677,7 @@ void Renderer2D::sdf_pass(vk::CommandBuffer cmd)
   cmd.dispatch(gx, gy, 1);
 }
 
-void Renderer2D::cascades_pass(vk::CommandBuffer cmd)
+void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, cascades_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, cascades_pipeline_layout_.get(), 0, 1,
@@ -700,7 +707,9 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd)
                                      .base_probe_size = base_probe_size_,
                                      .base_spacing = base_probe_spacing_,
                                      .base_probe_dir_count = base_probe_size_ * base_probe_size_,
-                                     .base_length = base_probe_length_};
+                                     .base_length = base_probe_length_,
+                                     .light_id = LightImage,
+                                     .first = first};
 
   const uint32_t gx = (cascades_width_ + 7) / 8;
   const uint32_t gy = (cascades_height_ + 7) / 8;
@@ -888,6 +897,7 @@ void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
   ImGui::InputFloat("Base Spacing", &config_.cascades.base_spacing);
   ImGui::InputFloat("Base Interval", &config_.cascades.base_interval);
   ImGui::InputFloat("Base Length", &config_.cascades.base_length);
+  ImGui::SliderScalar("Bounces", ImGuiDataType_U32, &config_.cascades.bounce, &min_cascades, &max_cascades);
 
   ImGui::Text("Materials:");
   for (size_t i = 0; i < materials_.size(); i++) {

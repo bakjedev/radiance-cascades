@@ -32,6 +32,7 @@ struct Renderer2DConfig {
     float base_spacing{1.0f};
     float base_interval{90.0f};
     float base_length{0.8f};
+    uint32_t bounce{1};
   } cascades;
 
   struct CompositeConfig {
@@ -75,7 +76,7 @@ private:
   void convert_pass(vk::CommandBuffer cmd);
   void jfa_pass(vk::CommandBuffer cmd);
   void sdf_pass(vk::CommandBuffer cmd);
-  void cascades_pass(vk::CommandBuffer cmd);
+  void cascades_pass(vk::CommandBuffer cmd, bool first = true);
   void light_pass(vk::CommandBuffer cmd);
   void pull_push_pass(vk::CommandBuffer cmd);
   void composite_pass(vk::CommandBuffer cmd);
