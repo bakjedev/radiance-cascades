@@ -185,7 +185,7 @@ private:
 
   static constexpr uint32_t PerfHistory = 512;
   using Timings = std::array<float, PerfHistory>;
-  using PerfPass = std::pair<std::string, Timings>;
+  using PerfPass = std::pair<std::string_view, Timings>;
   std::vector<PerfPass> perf_passes_;
   Timings perf_frame_{};
   uint32_t perf_head_{0};

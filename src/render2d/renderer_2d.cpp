@@ -1027,7 +1027,7 @@ void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
       }
     }
     if (!pass) {
-      pass = &perf_passes_.emplace_back(std::string(pass_timing.name), Timings{});
+      pass = &perf_passes_.emplace_back(pass_timing.name, Timings{});
     }
 
     pass->second[perf_head_] = ms;
