@@ -24,6 +24,7 @@ vulkan_dep = dependency('vulkan', include_type : 'system')
 sdl3_dep = dependency('sdl3', include_type : 'system', default_options : ['default_library=static', 'werror=false', 'warning_level=0'])
 vma_dep = dependency('VulkanMemoryAllocator', include_type : 'system')
 imgui_dep = dependency('imgui', include_type : 'system', default_options : ['default_library=static'])
+implot_dep = dependency('implot', include_type : 'system', default_options : ['default_library=static'])
 
 if compiler.get_argument_syntax() == 'msvc'
     add_project_arguments('/external:anglebrackets', '/external:W0', language : 'cpp')
@@ -68,4 +69,4 @@ foreach shader : shaders
     )
 endforeach
 
-executable('radiance-cascades', sources, compiled_shaders, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep, imgui_dep])
+executable('radiance-cascades', sources, compiled_shaders, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep, imgui_dep, implot_dep])

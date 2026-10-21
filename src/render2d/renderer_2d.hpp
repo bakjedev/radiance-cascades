@@ -47,13 +47,6 @@ struct Material {
   float paddington{};
 };
 
-class EmptyAllocator : public fwrk::Allocator {
-public:
-  std::optional<fwrk::PhysicalImage> create_image(const fwrk::ImageCreateInfo&) override { return std::nullopt; }
-  std::optional<fwrk::PhysicalBuffer> create_buffer(const fwrk::BufferCreateInfo&) override { return std::nullopt; }
-  void destroy_image(fwrk::PhysicalImage&) override {}
-  void destroy_buffer(fwrk::PhysicalBuffer&) override {};
-};
 
 class Renderer2D {
 public:
@@ -95,7 +88,6 @@ private:
   Swapchain swapchain_;
   std::array<Frame, frames_in_flight> frames_;
   std::vector<vk::UniqueSemaphore> submit_semaphores_;
-  EmptyAllocator empty_allocator_;
   fwrk::Context context_;
 
   vk::UniquePipelineLayout draw_pipeline_layout_;
@@ -190,6 +182,13 @@ private:
   float base_probe_length_{0.0f};
 
   uint32_t light_mips_{0};
+
+  static constexpr uint32_t PerfHistory = 512;
+  using Timings = std::array<float, PerfHistory>;
+  using PerfPass = std::pair<std::string, Timings>;
+  std::vector<PerfPass> perf_passes_;
+  Timings perf_frame_{};
+  uint32_t perf_head_{0};
 
   void import_swapchain_images();
   void import_images();

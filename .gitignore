@@ -4,3 +4,4 @@ build/
 .vs/
 /subprojects/*
 !/subprojects/*.wrap
+!/subprojects/packagefiles/
