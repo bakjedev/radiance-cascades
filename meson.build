@@ -55,7 +55,8 @@ shaders = [
     'light.slang',
     'composite.slang',
     'blit.slang',
-    'pull_push.slang'
+    'pull_push.slang',
+    'imgui.slang'
 ]
 
 compiled_shaders = []

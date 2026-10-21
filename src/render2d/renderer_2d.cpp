@@ -223,6 +223,12 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   std::array imgui_format{static_cast<VkFormat>(swapchain_.format())};
   imgui_vulkan_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = imgui_format.data();
 
+  auto imgui_shader_resource =
+      resource_manager_.create_from_file<ShaderResource>("imgui.slang.spv", ShaderResourceLoader{&file_system_});
+  imgui_vulkan_info.CustomShaderVertCreateInfo = {
+      VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0U, imgui_shader_resource->code.size(),
+      reinterpret_cast<const uint32_t*>(imgui_shader_resource->code.data())};
+
   ImGui_ImplVulkan_Init(&imgui_vulkan_info);
 
   // ----------------------------------------
@@ -517,8 +523,8 @@ void Renderer2D::run_frame()
   fwrk::Graph& graph = context_.graph();
 
   if (should_compile_) {
-    compile();
     should_compile_ = false;
+    compile();
   }
 
   context_.update_proxy(swapchain_proxy_, swapchain_imports_[image_index_]);
