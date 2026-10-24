@@ -3,6 +3,7 @@
 struct PushConstant {
     uint sdf_id;
     uint cascades_id;
+    uint scene_rad_id;
     uint cascade_width;
     uint cascade_height;
     uint cascade_idx;
@@ -12,15 +13,17 @@ struct PushConstant {
     uint base_probe_dir_count;
     float base_length;
     uint light_id;
+    uint scene_col_id;
     bool first;
 }
 
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
-[[vk::binding(0, 0)]] RWTexture2D<uint4> storageImagesU[];
 [[vk::binding(0, 0)]] RWTexture2DArray<float4> storageImageArraysF[];
 
 [[vk::binding(1, 0)]] StructuredBuffer<Material> storageBuffers[];
 [[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
+
+[[vk::binding(2, 0)]] Texture2D textures[];
 
 static const int2 probe_offsets[] = {
     int2(0, 0),
@@ -41,11 +44,11 @@ float4 trace(float2 start, float2 end, UBO ubo, PushConstant pc) {
         if (any(coord >= int2(ubo.scene_width, ubo.scene_height)) || any(coord < int2(0))) break;
         float distance = storageImagesF[pc.sdf_id].Load(coord).x;
         if (distance < EPSILON) {
-            uint8_t mat_id = uint8_t(storageImagesU[0].Load(coord).x);
-            Material mat = storageBuffers[0][mat_id];
-            float4 result = float4(mat.radiance, 0.0);
+            float3 radiance = textures[pc.scene_rad_id].Load(int3(coord, 0)).xyz;
+            float4 result = float4(radiance, 0.0);
             if (!pc.first) {
-                result.xyz += mat.base_color * storageImagesF[pc.light_id].Load(int2(floor(point - dir * 1.5))).xyz;
+                float3 color = textures[pc.scene_col_id].Load(int3(coord, 0)).xyz;
+                result.xyz += color * storageImagesF[pc.light_id].Load(int2(floor(point - dir * 1.5))).xyz;
             }
             return result;
         }

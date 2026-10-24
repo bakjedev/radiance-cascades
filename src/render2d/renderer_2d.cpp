@@ -16,20 +16,21 @@
 
 namespace {
   struct DrawPushConstant {
-    uint32_t x;
-    uint32_t y;
+    uint draw_id;
     uint32_t s;
+    int32_t x;
+    int32_t y;
     uint8_t material_id;
+  };
+
+  struct ConvertPushConstant {
+    uint32_t draw_id;
   };
 
   struct JFAPushConstant {
     uint32_t jfa_id;
     uint32_t read_idx;
     uint32_t k;
-  };
-
-  struct ConvertPushConstant {
-    uint32_t jfa_id;
   };
 
   struct SDFPushConstant {
@@ -41,6 +42,7 @@ namespace {
   struct CascadesPushConstant {
     uint32_t sdf_id;
     uint32_t cascades_id;
+    uint32_t scene_rad_id;
     uint32_t cascade_width;
     uint32_t cascade_height;
     uint32_t cascade_idx;
@@ -50,6 +52,7 @@ namespace {
     uint32_t base_probe_dir_count;
     float base_length;
     uint32_t light_id;
+    uint32_t scene_col_id;
     bool first;
   };
 
@@ -77,7 +80,8 @@ namespace {
     uint32_t composite_id;
     uint32_t light_id;
     uint32_t sdf_id;
-    uint32_t scene_id;
+    uint scene_col_id;
+    uint scene_rad_id;
     float rim;
   };
 
@@ -86,7 +90,7 @@ namespace {
   };
 
   enum StorageDescriptors {
-    SceneImage = 0,
+    DrawImage,
     JFAImage,
     SDFImage,
     CascadesImage,
@@ -94,7 +98,7 @@ namespace {
     LightImage,
   };
 
-  enum SampledDescriptors { CompositeTexture = 0 };
+  enum SampledDescriptors { DrawTexture = 0, SceneColorTexture, SceneRadianceTexture, CompositeTexture };
 } // namespace
 
 Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
@@ -265,7 +269,7 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
 
   // Convert pipeline
   {
-    vk::PushConstantRange convert_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(ConvertPushConstant)};
+    vk::PushConstantRange convert_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(ConvertPushConstant)};
 
     auto convert_shader_resource =
         resource_manager_.create_from_file<ShaderResource>("convert.slang.spv", ShaderResourceLoader{&file_system_});
@@ -275,10 +279,22 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
     convert_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&convert_push, 1});
 
-    const ComputePipelineDesc convert_pipeline_desc{.module = convert_shader_module_.get(),
-                                                    .layout = convert_pipeline_layout_.get()};
+    GraphicsPipelineDesc convert_pipeline_desc{};
+    convert_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, convert_shader_module_.get(),
+                                              "vs_main");
+    convert_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eFragment, convert_shader_module_.get(),
+                                              "fs_main");
 
-    convert_pipeline_ = create_compute_pipeline(device_.get(), convert_pipeline_desc);
+    convert_pipeline_desc.depth_stencil.depthTestEnable = vk::False;
+    convert_pipeline_desc.depth_stencil.depthWriteEnable = vk::False;
+
+    convert_pipeline_desc.add_attachment(vk::Format::eR8G8B8A8Srgb);
+    convert_pipeline_desc.add_attachment(vk::Format::eB10G11R11UfloatPack32);
+    convert_pipeline_desc.add_attachment(vk::Format::eR32G32B32A32Sint);
+
+    convert_pipeline_desc.layout = convert_pipeline_layout_.get();
+
+    convert_pipeline_ = create_graphics_pipeline(device_.get(), convert_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(convert_pipeline_.get()),
                                     "Convert Pipeline");
@@ -489,7 +505,7 @@ void Renderer2D::plot(const std::pair<float, float>& pos)
   const float x_factor = (pos.first - static_cast<float>(dst_off_x)) / static_cast<float>(dst_w);
   const float y_factor = (pos.second - static_cast<float>(dst_off_y)) / static_cast<float>(dst_h);
 
-  draw_pos_ = {static_cast<uint32_t>(x_factor * img_w), static_cast<uint32_t>(y_factor * img_h)};
+  draw_pos_ = {static_cast<int32_t>(x_factor * img_w), static_cast<int32_t>(y_factor * img_h)};
   should_draw = true;
 }
 
@@ -576,13 +592,17 @@ void Renderer2D::compile()
   // Passes
   // ------------------
   graph.add_compute_pass("Draw")
-      .set_storage_image_write({.resource = {.id = scene_id_}})
-      .set_storage_image_write({.resource = {.id = jfa_id_}})
+      .set_storage_image_write({.resource = {.id = draw_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { draw_pass(cmd); });
 
-  graph.add_compute_pass("Convert")
-      .set_storage_image_read({.resource = {.id = scene_id_}})
-      .set_storage_image_write({.resource = {.id = jfa_id_}})
+  graph.add_graphics_pass("Convert")
+      .set_image_read({.resource = {.id = draw_id_}})
+      .set_color_attachment(
+          {.resource = {.id = scene_color_id_}, .load_op = fwrk::LoadOp::Clear, .store_op = fwrk::StoreOp::Store})
+      .set_color_attachment(
+          {.resource = {.id = scene_radiance_id_}, .load_op = fwrk::LoadOp::Clear, .store_op = fwrk::StoreOp::Store})
+      .set_color_attachment(
+          {.resource = {.id = jfa_id_}, .load_op = fwrk::LoadOp::Clear, .store_op = fwrk::StoreOp::Store})
       .set_execute([this](vk::CommandBuffer cmd) { convert_pass(cmd); });
 
   graph.add_compute_pass("JFA")
@@ -597,6 +617,8 @@ void Renderer2D::compile()
   for (uint32_t i = 0; i < config_.cascades.bounce; i++) {
     auto cascade_pass = graph.add_compute_pass("Cascades")
                             .set_storage_image_read({.resource = {.id = sdf_id_}})
+                            .set_storage_image_read({.resource = {.id = scene_color_id_}})
+                            .set_storage_image_read({.resource = {.id = scene_radiance_id_}})
                             .set_storage_image_write({.resource = {.id = cascades_id_}});
 
     if (i != 0) cascade_pass.set_storage_image_read({.resource = {.id = light_id_}});
@@ -616,7 +638,8 @@ void Renderer2D::compile()
   graph.add_compute_pass("Composite")
       .set_storage_image_read({.resource = {.id = light_id_}, .level_count = 1})
       .set_storage_image_read({.resource = {.id = sdf_id_}})
-      .set_storage_image_read({.resource = {.id = scene_id_}})
+      .set_storage_image_read({.resource = {.id = scene_color_id_}})
+      .set_storage_image_read({.resource = {.id = scene_radiance_id_}})
       .set_storage_image_write({.resource = {.id = composite_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { composite_pass(cmd); });
 
@@ -650,8 +673,11 @@ void Renderer2D::draw_pass(vk::CommandBuffer cmd)
                          0, nullptr);
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
-  const DrawPushConstant push_constant{
-      .x = draw_pos_.first, .y = draw_pos_.second, .s = config_.drawing.size, .material_id = draw_material_};
+  const DrawPushConstant push_constant{.draw_id = DrawImage,
+                                       .s = config_.drawing.size,
+                                       .x = draw_pos_.first,
+                                       .y = draw_pos_.second,
+                                       .material_id = draw_material_};
 
   cmd.pushConstants(draw_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant),
                     &push_constant);
@@ -664,20 +690,23 @@ void Renderer2D::draw_pass(vk::CommandBuffer cmd)
 
 void Renderer2D::convert_pass(vk::CommandBuffer cmd)
 {
-  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, convert_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, convert_pipeline_layout_.get(), 0, 1,
+  cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, convert_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, convert_pipeline_layout_.get(), 0, 1,
                          &bindless_descriptor_set_, 0, nullptr);
 
-  constexpr ConvertPushConstant push_constant{
-      .jfa_id = JFAImage,
-  };
+  const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(config_.scene_size.width),
+                              static_cast<float>(config_.scene_size.height)};
+  cmd.setViewport(0, 1, &viewport);
 
-  cmd.pushConstants(convert_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(ConvertPushConstant),
+  const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{config_.scene_size.width, config_.scene_size.height}};
+  cmd.setScissor(0, 1, &scissor);
+
+  constexpr ConvertPushConstant push_constant{.draw_id = DrawTexture};
+
+  cmd.pushConstants(convert_pipeline_layout_.get(), vk::ShaderStageFlagBits::eFragment, 0, sizeof(ConvertPushConstant),
                     &push_constant);
 
-  const uint32_t gx = (config_.scene_size.width + 7) / 8;
-  const uint32_t gy = (config_.scene_size.height + 7) / 8;
-  cmd.dispatch(gx, gy, 1);
+  cmd.draw(3, 1, 0, 0);
 }
 
 void Renderer2D::jfa_pass(vk::CommandBuffer cmd)
@@ -766,6 +795,7 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
 
   CascadesPushConstant push_constant{.sdf_id = SDFImage,
                                      .cascades_id = CascadesImage,
+                                     .scene_rad_id = SceneRadianceTexture,
                                      .cascade_width = cascades_width_,
                                      .cascade_height = cascades_height_,
                                      .cascade_idx = 0,
@@ -775,6 +805,7 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
                                      .base_probe_dir_count = base_probe_size_ * base_probe_size_,
                                      .base_length = base_probe_length_,
                                      .light_id = LightImage,
+                                     .scene_col_id = SceneColorTexture,
                                      .first = first};
 
   const uint32_t gx = (cascades_width_ + 7) / 8;
@@ -907,7 +938,8 @@ void Renderer2D::composite_pass(vk::CommandBuffer cmd)
   const CompositePushConstant push_constant{.composite_id = CompositeImage,
                                             .light_id = LightImage,
                                             .sdf_id = SDFImage,
-                                            .scene_id = SceneImage,
+                                            .scene_col_id = SceneColorTexture,
+                                            .scene_rad_id = SceneRadianceTexture,
                                             .rim = config_.composite.rim};
 
   cmd.pushConstants(composite_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
@@ -1097,6 +1129,8 @@ void Renderer2D::import_swapchain_images()
   const fwrk::ImageImportInfo swapchain_image_info{.type = VK_IMAGE_TYPE_2D,
                                                    .size = {swapchain_.extent().width, swapchain_.extent().height, 1},
                                                    .format = static_cast<VkFormat>(swapchain_.format()),
+                                                   .mip_count = 1,
+                                                   .layer_count = 1,
                                                    .state = fwrk::PhysicalState::Undefined};
 
   for (uint32_t i = 0; i < swapchain_.image_count(); i++) {
@@ -1115,20 +1149,38 @@ void Renderer2D::import_images()
       .type = VK_IMAGE_TYPE_2D,
       .size = {.width = config_.scene_size.width, .height = config_.scene_size.height, .depth = 1},
       .format = VK_FORMAT_R8_UINT,
+      .mip_count = 1,
+      .layer_count = 1,
       .state = fwrk::PhysicalState::Undefined};
 
-  if (scene_id_) {
-    context_.update_image(scene_id_, image_import_info, scene_image_->image());
+  if (draw_id_) {
+    context_.update_image(draw_id_, image_import_info, draw_image_->image());
   } else {
-    scene_id_ = context_.import_image(image_import_info, scene_image_->image());
+    draw_id_ = context_.import_image(image_import_info, draw_image_->image());
+  }
+
+  image_import_info.format = VK_FORMAT_R8G8B8A8_SRGB;
+  if (scene_color_id_) {
+    context_.update_image(scene_color_id_, image_import_info, scene_color_image_->image());
+  } else {
+    scene_color_id_ = context_.import_image(image_import_info, scene_color_image_->image());
+  }
+
+  image_import_info.format = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+  if (scene_radiance_id_) {
+    context_.update_image(scene_radiance_id_, image_import_info, scene_radiance_image_->image());
+  } else {
+    scene_radiance_id_ = context_.import_image(image_import_info, scene_radiance_image_->image());
   }
 
   image_import_info.format = VK_FORMAT_R32G32B32A32_SINT;
+  image_import_info.layer_count = 2;
   if (jfa_id_) {
     context_.update_image(jfa_id_, image_import_info, jfa_image_->image());
   } else {
     jfa_id_ = context_.import_image(image_import_info, jfa_image_->image());
   }
+  image_import_info.layer_count = 1;
 
   image_import_info.format = VK_FORMAT_R32_SFLOAT;
   if (sdf_id_) {
@@ -1138,11 +1190,13 @@ void Renderer2D::import_images()
   }
 
   image_import_info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+  image_import_info.mip_count = light_mips_;
   if (light_id_) {
     context_.update_image(light_id_, image_import_info, light_image_->image());
   } else {
     light_id_ = context_.import_image(image_import_info, light_image_->image());
   }
+  image_import_info.mip_count = 1;
 
   if (composite_id_) {
     context_.update_image(composite_id_, image_import_info, composite_image_->image());
@@ -1152,6 +1206,7 @@ void Renderer2D::import_images()
 
   image_import_info.size.width = cascades_width_;
   image_import_info.size.height = cascades_height_;
+  image_import_info.layer_count = config_.cascades.cascades;
   if (cascades_id_) {
     context_.update_image(cascades_id_, image_import_info, cascades_image_->image());
   } else {
@@ -1163,19 +1218,34 @@ void Renderer2D::create_images()
 {
   device_.get().waitIdle();
 
-  scene_image_.emplace(device_.get_allocator(), device_.get(),
-                       ImageDesc{}
-                           .set_extent(config_.scene_size.width, config_.scene_size.height)
-                           .set_format(vk::Format::eR8Uint)
-                           .set_usage(vk::ImageUsageFlagBits::eStorage)
-                           .set_debug_name("Scene Image"));
+  draw_image_.emplace(device_.get_allocator(), device_.get(),
+                      ImageDesc{}
+                          .set_extent(config_.scene_size.width, config_.scene_size.height)
+                          .set_format(vk::Format::eR8Uint)
+                          .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
+                          .set_debug_name("Draw Image"));
+
+  scene_color_image_.emplace(device_.get_allocator(), device_.get(),
+                             ImageDesc{}
+                                 .set_extent(config_.scene_size.width, config_.scene_size.height)
+                                 .set_format(vk::Format::eR8G8B8A8Srgb)
+                                 .set_usage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled)
+                                 .set_debug_name("Scene Color Image"));
+
+  scene_radiance_image_.emplace(
+      device_.get_allocator(), device_.get(),
+      ImageDesc{}
+          .set_extent(config_.scene_size.width, config_.scene_size.height)
+          .set_format(vk::Format::eB10G11R11UfloatPack32)
+          .set_usage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled)
+          .set_debug_name("Scene Radiance Image"));
 
   jfa_image_.emplace(device_.get_allocator(), device_.get(),
                      ImageDesc{}
                          .set_extent(config_.scene_size.width, config_.scene_size.height)
                          .set_format(vk::Format::eR32G32B32A32Sint)
                          .set_layers(2)
-                         .set_usage(vk::ImageUsageFlagBits::eStorage)
+                         .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eColorAttachment)
                          .set_debug_name("JFA Images"));
 
   sdf_image_.emplace(device_.get_allocator(), device_.get(),
@@ -1202,7 +1272,9 @@ void Renderer2D::create_images()
                                .set_debug_name("Composite Image"));
 
 
-  scene_view_ = scene_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  draw_view_ = draw_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  scene_color_view_ = scene_color_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  scene_radiance_view_ = scene_radiance_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
   jfa_view_ =
       jfa_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
   sdf_view_ = sdf_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
@@ -1249,13 +1321,20 @@ void Renderer2D::create_cascade_image()
 void Renderer2D::update_descriptor()
 {
   DescriptorWriter writer{};
-  writer.add_image(0, SceneImage, vk::DescriptorType::eStorageImage, scene_view_.get(), vk::ImageLayout::eGeneral)
+  writer.add_image(0, DrawImage, vk::DescriptorType::eStorageImage, draw_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, JFAImage, vk::DescriptorType::eStorageImage, jfa_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, SDFImage, vk::DescriptorType::eStorageImage, sdf_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, CascadesImage, vk::DescriptorType::eStorageImage, cascades_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, CompositeImage, vk::DescriptorType::eStorageImage, composite_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(2, DrawTexture, vk::DescriptorType::eSampledImage, draw_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, SceneColorTexture, vk::DescriptorType::eSampledImage, scene_color_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, SceneRadianceTexture, vk::DescriptorType::eSampledImage, scene_radiance_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, CompositeTexture, vk::DescriptorType::eSampledImage, composite_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal);
+  ;
 
   for (uint32_t i = 0; i < light_mips_; i++) {
     writer.add_image(0, LightImage + i, vk::DescriptorType::eStorageImage, light_views_[i].get(),

@@ -1,8 +1,9 @@
 #include "common.slang"
 
 struct PushConstant {
-    int2 pos;
+    uint draw_id;
     uint size;
+    int2 pos;
     uint8_t material_id;
 }
 
@@ -25,5 +26,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
         return;
     }
 
-    storageImagesU[0].Store(coord, int4(pc.material_id));
+    storageImagesU[pc.draw_id].Store(coord, uint4(pc.material_id));
 }

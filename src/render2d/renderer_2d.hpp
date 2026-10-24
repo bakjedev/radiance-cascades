@@ -133,9 +133,17 @@ private:
 
   vk::UniqueSampler sampler_;
 
-  std::optional<Image> scene_image_;
-  vk::UniqueImageView scene_view_;
-  fwrk::ResourceID scene_id_;
+  std::optional<Image> draw_image_;
+  vk::UniqueImageView draw_view_;
+  fwrk::ResourceID draw_id_;
+
+  std::optional<Image> scene_color_image_;
+  vk::UniqueImageView scene_color_view_;
+  fwrk::ResourceID scene_color_id_;
+
+  std::optional<Image> scene_radiance_image_;
+  vk::UniqueImageView scene_radiance_view_;
+  fwrk::ResourceID scene_radiance_id_;
 
   std::optional<Image> jfa_image_;
   vk::UniqueImageView jfa_view_;
@@ -171,7 +179,7 @@ private:
   std::vector<Material> materials_;
   uint8_t draw_material_ = 1;
   bool should_draw = false;
-  std::pair<uint32_t, uint32_t> draw_pos_;
+  std::pair<int32_t, int32_t> draw_pos_;
 
   uint32_t final_jfa_{0};
 

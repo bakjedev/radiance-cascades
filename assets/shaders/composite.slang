@@ -4,22 +4,15 @@ struct PushConstant {
     uint composite_id;
     uint light_id;
     uint sdf_id;
-    uint scene_id;
+    uint scene_col_id;
+    uint scene_rad_id;
     float rim;
 }
 
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
-[[vk::binding(0, 0)]] RWTexture2D<uint4> storageImagesU[];
 [[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
-[[vk::binding(1, 0)]] StructuredBuffer<Material> storageBuffers[];
 
-float sdf_at(uint id, int2 p, int2 size) {
-    return storageImagesF[id].Load(clamp(p, int2(0), size - 1)).x;
-}
-
-float3 light_at(uint id, int2 p, int2 size) {
-    return storageImagesF[id].Load(clamp(p, int2(0), size - 1)).rgb;
-}
+[[vk::binding(2, 0)]] Texture2D textures[];
 
 [shader("compute")]
 [numthreads(8, 8)]
@@ -29,19 +22,19 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     int2 size = int2(ubo.scene_width, ubo.scene_height);
     if (any(local >= size)) return;
 
-    uint8_t mat_id = uint8_t(storageImagesU[pc.scene_id].Load(local).x);
+    float4 color = textures[pc.scene_col_id].Load(int3(local, 0));
     float3 light = storageImagesF[pc.light_id].Load(local).rgb;
 
-    if (mat_id == 0) {
+    if (!(bool)color.a) {
         storageImagesF[pc.composite_id].Store(local, float4(light, 1.0));
         return;
     }
     
-    Material mat = storageBuffers[0][mat_id];
+    float3 radiance = textures[pc.scene_rad_id].Load(int3(local, 0)).xyz;
     float dist = storageImagesF[pc.sdf_id].Load(local).x;
 
     float rim = exp(min(dist, 0.0) / pc.rim);
-    float3 color = mat.base_color * light * rim + mat.radiance;
+    float3 result = color.xyz * light * rim + radiance;
 
-    storageImagesF[pc.composite_id].Store(local, float4(color, 1.0));
+    storageImagesF[pc.composite_id].Store(local, float4(result, 1.0));
 }
