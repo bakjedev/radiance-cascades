@@ -1,14 +1,12 @@
 #include "application.hpp"
-
-#include <cmath>
+#include <SDL3/SDL_vulkan.h>
 #include <iostream>
-#include "imgui_impl_sdl3.h"
 
 struct QuitEvent {};
 
 Application::Application(const uint32_t window_width, const uint32_t window_height) :
     window_(event_dispatcher_, window_width, window_height, "everything.. seems to be in order."),
-    input_(event_dispatcher_), renderer_(window_, event_dispatcher_, resource_manager_, file_system_)
+    input_(event_dispatcher_), imgui_init_(window_.get()), renderer_(create_renderer())
 {
 }
 
@@ -16,8 +14,9 @@ Application::~Application() = default;
 
 void Application::run()
 {
-  const uint64_t quit_event_listener =
-      event_dispatcher_.listen<QuitEvent>([this](const QuitEvent&) { running = false; });
+  event_dispatcher_.listen<QuitEvent>([this](const QuitEvent&) { running = false; });
+  event_dispatcher_.listen<WindowResizeEvent>(
+      [this](const WindowResizeEvent& event) { renderer_.window_resize(event.width, event.height); });
 
   file_system_.add_route("assets", "../assets");
 
@@ -33,14 +32,18 @@ void Application::run()
       running = false;
     }
 
-    if (input_.mouse_down(MouseButton::Left)) {
-      renderer_.plot({input_.mouse_x(), input_.mouse_y()});
+    if (input_.mouse_pressed(MouseButton::Left)) {
+      renderer_.start_plot();
+    }
+    if (input_.mouse_released(MouseButton::Left)) {
+      renderer_.end_plot();
     }
 
-    renderer_.render();
-  }
+    ImGui_ImplSDL3_NewFrame();
 
-  event_dispatcher_.remove(quit_event_listener);
+    renderer_.render(
+        {.window_size = {window_.width(), window_.height()}, .mouse_pos = {input_.mouse_x(), input_.mouse_y()}});
+  }
 }
 
 void Application::poll_events()
@@ -79,4 +82,28 @@ void Application::poll_events()
         break;
     }
   }
+}
+
+Renderer2D Application::create_renderer()
+{
+  uint32_t sdl_instance_extension_count = 0;
+  const auto* const sdl_instance_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_instance_extension_count);
+
+  return Renderer2D(Renderer2D::RendererCreateInfo{
+      .instance_extensions = {sdl_instance_extensions, sdl_instance_extension_count},
+      .create_surface =
+          [this](VkInstance instance) {
+            VkSurfaceKHR surface = VK_NULL_HANDLE;
+            if (!SDL_Vulkan_CreateSurface(window_.get(), instance, nullptr, &surface)) {
+              throw std::runtime_error("Failed to create Vulkan Surface with SDL");
+            }
+            return surface;
+          },
+      .initial_extent = {window_.width(), window_.height()},
+      .load_shader =
+          [this](const std::string& name) {
+            auto shader_resource =
+                resource_manager_.create_from_file<ShaderResource>(name, ShaderResourceLoader{&file_system_});
+            return shader_resource->code;
+          }});
 }

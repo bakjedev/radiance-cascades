@@ -3,7 +3,7 @@
 
 class Instance {
 public:
-  Instance();
+  explicit Instance(std::span<const char* const> instance_extensions);
 
   [[nodiscard]] vk::Instance get() const { return instance_.get(); }
 

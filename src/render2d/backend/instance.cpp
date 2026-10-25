@@ -1,5 +1,4 @@
 #include "instance.hpp"
-#include <SDL3/SDL_vulkan.h>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
@@ -11,7 +10,7 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(vk::DebugUtilsMessageSeve
   return VK_FALSE;
 }
 
-Instance::Instance()
+Instance::Instance(std::span<const char* const> instance_extensions)
 {
   static vk::detail::DynamicLoader dl;
   VULKAN_HPP_DEFAULT_DISPATCHER.init(dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"));
@@ -19,20 +18,11 @@ Instance::Instance()
   std::vector<const char*> extensions;
   std::vector<const char*> layers;
 
+  extensions.insert(extensions.end(), instance_extensions.begin(), instance_extensions.end());
+
 #ifndef NDEBUG
   layers.push_back("VK_LAYER_KHRONOS_validation");
 #endif
-
-  uint32_t sdl_instance_extension_count = 0;
-  const auto* const sdl_instance_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_instance_extension_count);
-  if (sdl_instance_extensions == nullptr) {
-    throw std::runtime_error("Failed to get SDL Vulkan extensions");
-  }
-
-  extensions.reserve(sdl_instance_extension_count);
-  for (uint32_t i = 0; i < sdl_instance_extension_count; i++) {
-    extensions.push_back(sdl_instance_extensions[i]);
-  }
 
   extensions.push_back(vk::EXTDebugUtilsExtensionName);
 

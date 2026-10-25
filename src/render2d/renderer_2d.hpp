@@ -7,58 +7,63 @@
 #include "backend/swapchain.hpp"
 #include "framework/context.hpp"
 
-class Window;
-class EventDispatcher;
-
-template<typename... Ts>
-class ResourceManager;
-struct ShaderResource;
-class FileSystem;
-
-constexpr uint32_t frames_in_flight = 2;
-
-struct Renderer2DConfig {
-  struct DrawConfig {
-    uint32_t size{50};
-  } drawing;
-
-  struct SceneSize {
-    uint32_t width{1024};
-    uint32_t height{1024};
-  } scene_size;
-
-  struct CascadesConfig {
-    uint32_t cascades{6};
-    float base_spacing{1.0f};
-    float base_interval{90.0f};
-    float base_length{0.8f};
-    uint32_t bounce{1};
-  } cascades;
-
-  struct CompositeConfig {
-    float rim{12.0f};
-  } composite;
-};
-
-struct Material {
-  float color[3];
-  float padding{};
-  float radiance[3];
-  float paddington{};
-};
-
-
 class Renderer2D {
 public:
-  Renderer2D(Window& window, EventDispatcher& event_dispatcher, ResourceManager<ShaderResource>& resource_manager,
-             FileSystem& file_system);
+  struct RendererCreateInfo {
+    std::span<const char* const> instance_extensions;
+    std::function<VkSurfaceKHR(VkInstance)> create_surface;
+    VkExtent2D initial_extent;
+    std::function<std::vector<std::byte>(const std::string&)> load_shader;
+  };
+
+  struct RenderInfo {
+    std::pair<int, int> window_size;
+    std::pair<int, int> mouse_pos;
+  };
+
+  explicit Renderer2D(const RendererCreateInfo& create_info);
   ~Renderer2D();
 
-  void render();
+  void render(RenderInfo info);
 
-  void plot(const std::pair<float, float>& pos);
+  void window_resize(int width, int height);
+
+  void start_plot();
+  void end_plot();
 
 private:
+  static constexpr uint32_t frames_in_flight = 2;
+
+  struct Renderer2DConfig {
+    struct DrawConfig {
+      uint32_t size{50};
+    } drawing;
+
+    struct SceneSize {
+      uint32_t width{1024};
+      uint32_t height{1024};
+    } scene_size;
+
+    struct CascadesConfig {
+      uint32_t cascades{6};
+      float base_spacing{1.0f};
+      float base_interval{90.0f};
+      float base_length{0.8f};
+      uint32_t bounce{1};
+    } cascades;
+
+    struct CompositeConfig {
+      float rim{12.0f};
+    } composite;
+  };
+
+  struct Material {
+    float color[3];
+    float padding{};
+    float radiance[3];
+    float paddington{};
+  };
+
   bool begin_frame();
   void run_frame();
   void end_frame();
@@ -76,12 +81,8 @@ private:
   void blit_pass(vk::CommandBuffer cmd);
   void imgui_pass(vk::CommandBuffer cmd);
 
-  Window& window_;
-  EventDispatcher& event_dispatcher_;
-  ResourceManager<ShaderResource>& resource_manager_;
-  FileSystem& file_system_;
-
   Renderer2DConfig config_;
+  RenderInfo info_;
 
   Instance instance_;
   Device device_;
@@ -179,7 +180,6 @@ private:
   std::vector<Material> materials_;
   uint8_t draw_material_ = 1;
   bool should_draw = false;
-  std::pair<int32_t, int32_t> draw_pos_;
 
   uint32_t final_jfa_{0};
 
@@ -193,7 +193,7 @@ private:
 
   static constexpr uint32_t PerfHistory = 512;
   using Timings = std::array<float, PerfHistory>;
-  using PerfPass = std::pair<std::string_view, Timings>;
+  using PerfPass = std::pair<std::string, Timings>;
   std::vector<PerfPass> perf_passes_;
   Timings perf_frame_{};
   uint32_t perf_head_{0};
@@ -206,5 +206,7 @@ private:
 
   void update_descriptor();
 
-  static VkSurfaceKHR create_surface(const Window& window, const Instance& instance);
+  [[nodiscard]] std::pair<int32_t, int32_t> screen_to_pos(const std::pair<int32_t, int32_t>& screen) const;
+
+  fwrk::Context create_fwrk_context() const;
 };

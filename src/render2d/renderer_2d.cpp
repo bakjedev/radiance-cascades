@@ -1,18 +1,13 @@
 #include "renderer_2d.hpp"
-
-#include <SDL3/SDL_vulkan.h>
 #include <cmath>
-
 #include "backend/descriptor.hpp"
 #include "backend/pipeline.hpp"
 #include "imgui.h"
-#include "imgui_impl_sdl3.h"
 #include "imgui_impl_vulkan.h"
 #include "implot.h"
 #include "src/event_dispatcher.hpp"
 #include "src/resource/resource_manager.hpp"
 #include "src/resource/types/shader_resource.hpp"
-#include "src/window.hpp"
 
 namespace {
   struct DrawPushConstant {
@@ -101,19 +96,10 @@ namespace {
   enum SampledDescriptors { DrawTexture = 0, SceneColorTexture, SceneRadianceTexture, CompositeTexture };
 } // namespace
 
-Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
-                       ResourceManager<ShaderResource>& resource_manager, FileSystem& file_system) :
-    window_(window), event_dispatcher_(event_dispatcher), resource_manager_(resource_manager),
-    file_system_(file_system), device_(instance_.get(), create_surface(window, instance_)),
-    swapchain_(device_, {window.width(), window.height()}, vk::ImageUsageFlagBits::eColorAttachment),
-    context_({.vulkan = {instance_.get(), device_.get_physical(), device_.get(), frames_in_flight},
-              .allocator = nullptr,
-              .debug_markers =
-                  fwrk::DebugMarkerInfo{.cmd_begin = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
-                                            vkGetInstanceProcAddr(instance_.get(), "vkCmdBeginDebugUtilsLabelEXT")),
-                                        .cmd_end = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
-                                            vkGetInstanceProcAddr(instance_.get(), "vkCmdEndDebugUtilsLabelEXT"))},
-              .timestamps = true})
+Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
+    instance_(create_info.instance_extensions), device_(instance_.get(), create_info.create_surface(instance_.get())),
+    swapchain_(device_, create_info.initial_extent, vk::ImageUsageFlagBits::eColorAttachment),
+    context_(create_fwrk_context())
 {
   for (Frame& frame: frames_) {
     create_frame(frame, device_);
@@ -124,11 +110,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   for (auto& semaphore: submit_semaphores_) {
     semaphore = device_.get().createSemaphoreUnique(semaphore_create_info);
   }
-
-  event_dispatcher.listen<WindowResizeEvent>([this](const WindowResizeEvent& event) {
-    swapchain_.recreate({static_cast<uint32_t>(event.width), static_cast<uint32_t>(event.height)});
-    import_swapchain_images();
-  });
 
   // ----------------------------------------
   // Buffers
@@ -205,11 +186,6 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   // ----------------------------------------
   // ImGui
   // ----------------------------------------
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImPlot::CreateContext();
-  ImGui_ImplSDL3_InitForVulkan(window_.get());
-
   ImGui_ImplVulkan_InitInfo imgui_vulkan_info = {};
   imgui_vulkan_info.ApiVersion = vk::ApiVersion13;
   imgui_vulkan_info.Instance = instance_.get();
@@ -227,11 +203,10 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   std::array imgui_format{static_cast<VkFormat>(swapchain_.format())};
   imgui_vulkan_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = imgui_format.data();
 
-  auto imgui_shader_resource =
-      resource_manager_.create_from_file<ShaderResource>("imgui.slang.spv", ShaderResourceLoader{&file_system_});
-  imgui_vulkan_info.CustomShaderVertCreateInfo = {
-      VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0U, imgui_shader_resource->code.size(),
-      reinterpret_cast<const uint32_t*>(imgui_shader_resource->code.data())};
+  auto imgui_shader = create_info.load_shader("imgui.slang.spv");
+  imgui_vulkan_info.CustomShaderVertCreateInfo = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0U,
+                                                  imgui_shader.size(),
+                                                  reinterpret_cast<const uint32_t*>(imgui_shader.data())};
 
   ImGui_ImplVulkan_Init(&imgui_vulkan_info);
 
@@ -250,10 +225,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant)};
 
-    auto draw_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("draw.slang.spv", ShaderResourceLoader{&file_system_});
-
-    draw_shader_module_ = create_shader_module(device_.get(), draw_shader_resource->code);
+    const auto draw_shader = create_info.load_shader("draw.slang.spv");
+    draw_shader_module_ = create_shader_module(device_.get(), draw_shader);
 
     draw_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&draw_push, 1});
@@ -271,10 +244,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange convert_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(ConvertPushConstant)};
 
-    auto convert_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("convert.slang.spv", ShaderResourceLoader{&file_system_});
-
-    convert_shader_module_ = create_shader_module(device_.get(), convert_shader_resource->code);
+    const auto convert_shader = create_info.load_shader("convert.slang.spv");
+    convert_shader_module_ = create_shader_module(device_.get(), convert_shader);
 
     convert_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&convert_push, 1});
@@ -304,10 +275,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange jfa_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant)};
 
-    auto jfa_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("jfa.slang.spv", ShaderResourceLoader{&file_system_});
-
-    jfa_shader_module_ = create_shader_module(device_.get(), jfa_shader_resource->code);
+    const auto jfa_shader = create_info.load_shader("jfa.slang.spv");
+    jfa_shader_module_ = create_shader_module(device_.get(), jfa_shader);
 
     jfa_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&jfa_push, 1});
@@ -324,10 +293,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange sdf_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant)};
 
-    auto sdf_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("sdf.slang.spv", ShaderResourceLoader{&file_system_});
-
-    sdf_shader_module_ = create_shader_module(device_.get(), sdf_shader_resource->code);
+    const auto sdf_shader = create_info.load_shader("sdf.slang.spv");
+    sdf_shader_module_ = create_shader_module(device_.get(), sdf_shader);
 
     sdf_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&sdf_push, 1});
@@ -344,10 +311,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange cascades_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CascadesPushConstant)};
 
-    auto cascades_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("cascades.slang.spv", ShaderResourceLoader{&file_system_});
-
-    cascades_shader_module_ = create_shader_module(device_.get(), cascades_shader_resource->code);
+    const auto cascades_shader = create_info.load_shader("cascades.slang.spv");
+    cascades_shader_module_ = create_shader_module(device_.get(), cascades_shader);
 
     cascades_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&cascades_push, 1});
@@ -365,10 +330,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange light_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(LightPushConstant)};
 
-    auto light_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("light.slang.spv", ShaderResourceLoader{&file_system_});
-
-    light_shader_module_ = create_shader_module(device_.get(), light_shader_resource->code);
+    const auto light_shader = create_info.load_shader("light.slang.spv");
+    light_shader_module_ = create_shader_module(device_.get(), light_shader);
 
     light_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&light_push, 1});
@@ -386,10 +349,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange pull_push_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(PullPushConstant)};
 
-    auto pull_push_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("pull_push.slang.spv", ShaderResourceLoader{&file_system_});
-
-    pull_push_shader_module_ = create_shader_module(device_.get(), pull_push_shader_resource->code);
+    const auto pull_push_shader = create_info.load_shader("pull_push.slang.spv");
+    pull_push_shader_module_ = create_shader_module(device_.get(), pull_push_shader);
 
     pull_push_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&pull_push_push, 1});
@@ -412,10 +373,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
 
-    auto composite_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("composite.slang.spv", ShaderResourceLoader{&file_system_});
-
-    composite_shader_module_ = create_shader_module(device_.get(), composite_shader_resource->code);
+    const auto composite_shader = create_info.load_shader("composite.slang.spv");
+    composite_shader_module_ = create_shader_module(device_.get(), composite_shader);
 
     composite_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&composite_push, 1});
@@ -433,10 +392,8 @@ Renderer2D::Renderer2D(Window& window, EventDispatcher& event_dispatcher,
   {
     vk::PushConstantRange blit_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant)};
 
-    auto blit_shader_resource =
-        resource_manager_.create_from_file<ShaderResource>("blit.slang.spv", ShaderResourceLoader{&file_system_});
-
-    blit_shader_module_ = create_shader_module(device_.get(), blit_shader_resource->code);
+    const auto blit_shader = create_info.load_shader("blit.slang.spv");
+    blit_shader_module_ = create_shader_module(device_.get(), blit_shader);
 
     blit_pipeline_layout_ =
         create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&blit_push, 1});
@@ -475,38 +432,32 @@ Renderer2D::~Renderer2D()
 {
   device_.get().waitIdle();
   ImGui_ImplVulkan_Shutdown();
-  ImGui_ImplSDL3_Shutdown();
-  ImPlot::DestroyContext();
-  ImGui::DestroyContext();
 }
 
-void Renderer2D::render()
+void Renderer2D::render(RenderInfo info)
 {
+  info_ = std::move(info);
   if (begin_frame()) {
     run_frame();
     end_frame();
   }
 }
-void Renderer2D::plot(const std::pair<float, float>& pos)
+void Renderer2D::window_resize(const int width, const int height)
 {
-  const auto swp_w = swapchain_.extent().width;
-  const auto swp_h = swapchain_.extent().height;
-  const auto img_w = static_cast<float>(config_.scene_size.width);
-  const auto img_h = static_cast<float>(config_.scene_size.height);
+  swapchain_.recreate({static_cast<uint32_t>(width), static_cast<uint32_t>(height)});
+  import_swapchain_images();
+}
 
-  const float scale = std::min(static_cast<float>(swp_w) / img_w, static_cast<float>(swp_h) / img_h);
-
-  const auto dst_w = static_cast<uint32_t>(img_w * scale);
-  const auto dst_h = static_cast<uint32_t>(img_h * scale);
-
-  const uint32_t dst_off_x = (static_cast<uint32_t>(swp_w) - dst_w) / 2;
-  const uint32_t dst_off_y = (static_cast<uint32_t>(swp_h) - dst_h) / 2;
-
-  const float x_factor = (pos.first - static_cast<float>(dst_off_x)) / static_cast<float>(dst_w);
-  const float y_factor = (pos.second - static_cast<float>(dst_off_y)) / static_cast<float>(dst_h);
-
-  draw_pos_ = {static_cast<int32_t>(x_factor * img_w), static_cast<int32_t>(y_factor * img_h)};
+void Renderer2D::start_plot()
+{
   should_draw = true;
+  should_compile_ = true;
+}
+
+void Renderer2D::end_plot()
+{
+  should_draw = false;
+  should_compile_ = true;
 }
 
 bool Renderer2D::begin_frame()
@@ -518,10 +469,9 @@ bool Renderer2D::begin_frame()
     throw std::runtime_error("Failed to wait for fences: " + vk::to_string(result));
   }
 
-  auto image_index = swapchain_.acquire_next_image(frame.image_available.get());
+  const auto image_index = swapchain_.acquire_next_image(frame.image_available.get());
   if (!image_index) {
-    swapchain_.recreate({window_.width(), window_.height()});
-    import_swapchain_images();
+    window_resize(info_.window_size.first, info_.window_size.second);
     return false;
   }
   image_index_ = image_index.value();
@@ -572,8 +522,7 @@ void Renderer2D::end_frame()
   device_.get_queue().submit2(submit_info, frame.in_flight.get());
 
   if (!swapchain_.present(device_.get_queue(), image_index_, submit_semaphores_.at(image_index_).get())) {
-    swapchain_.recreate({window_.width(), window_.height()});
-    import_swapchain_images();
+    window_resize(info_.window_size.first, info_.window_size.second);
   }
 
   current_frame_ = (current_frame_ + 1) % frames_in_flight;
@@ -591,9 +540,11 @@ void Renderer2D::compile()
   // ------------------
   // Passes
   // ------------------
-  graph.add_compute_pass("Draw")
-      .set_storage_image_write({.resource = {.id = draw_id_}})
-      .set_execute([this](vk::CommandBuffer cmd) { draw_pass(cmd); });
+  if (should_draw) {
+    graph.add_compute_pass("Draw")
+        .set_storage_image_write({.resource = {.id = draw_id_}})
+        .set_execute([this](vk::CommandBuffer cmd) { draw_pass(cmd); });
+  }
 
   graph.add_graphics_pass("Convert")
       .set_image_read({.resource = {.id = draw_id_}})
@@ -667,25 +618,19 @@ void Renderer2D::compile()
 
 void Renderer2D::draw_pass(vk::CommandBuffer cmd)
 {
-  if (!should_draw) return;
-
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, draw_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
-  const DrawPushConstant push_constant{.draw_id = DrawImage,
-                                       .s = config_.drawing.size,
-                                       .x = draw_pos_.first,
-                                       .y = draw_pos_.second,
-                                       .material_id = draw_material_};
+  const auto [draw_x, draw_y] = screen_to_pos(info_.mouse_pos);
+  const DrawPushConstant push_constant{
+      .draw_id = DrawImage, .s = config_.drawing.size, .x = draw_x, .y = draw_y, .material_id = draw_material_};
 
   cmd.pushConstants(draw_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant),
                     &push_constant);
 
   const uint32_t gs = (config_.drawing.size + 7) / 8;
   cmd.dispatch(gs, gs, 1);
-
-  should_draw = false;
 }
 
 void Renderer2D::convert_pass(vk::CommandBuffer cmd)
@@ -988,7 +933,6 @@ void Renderer2D::blit_pass(vk::CommandBuffer cmd)
 void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
 {
   ImGui_ImplVulkan_NewFrame();
-  ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
   ImGui::Begin("Config");
 
@@ -1070,6 +1014,10 @@ void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
 
     pass->second[perf_head_] = ms;
   }
+
+  std::erase_if(perf_passes_, [](const PerfPass& pass) {
+    return std::ranges::all_of(pass.second, [](const float time) { return time == 0.0f; });
+  });
 
   const float frame_ms = ns_to_ms(timings.end - timings.begin);
   perf_frame_[perf_head_] = frame_ms;
@@ -1344,11 +1292,36 @@ void Renderer2D::update_descriptor()
   writer.update(device_.get(), bindless_descriptor_set_);
 }
 
-VkSurfaceKHR Renderer2D::create_surface(const Window& window, const Instance& instance)
+std::pair<int32_t, int32_t> Renderer2D::screen_to_pos(const std::pair<int32_t, int32_t>& screen) const
 {
-  VkSurfaceKHR surface = VK_NULL_HANDLE;
-  if (!SDL_Vulkan_CreateSurface(window.get(), instance.get(), nullptr, &surface)) {
-    throw std::runtime_error("Failed to create Vulkan Surface with SDL");
-  }
-  return surface;
+  const auto swp_w = swapchain_.extent().width;
+  const auto swp_h = swapchain_.extent().height;
+  const auto img_w = static_cast<float>(config_.scene_size.width);
+  const auto img_h = static_cast<float>(config_.scene_size.height);
+
+  const float scale = std::min(static_cast<float>(swp_w) / img_w, static_cast<float>(swp_h) / img_h);
+
+  const auto dst_w = static_cast<uint32_t>(img_w * scale);
+  const auto dst_h = static_cast<uint32_t>(img_h * scale);
+
+  const uint32_t dst_off_x = (static_cast<uint32_t>(swp_w) - dst_w) / 2;
+  const uint32_t dst_off_y = (static_cast<uint32_t>(swp_h) - dst_h) / 2;
+
+  const float x_factor = (static_cast<float>(screen.first) - static_cast<float>(dst_off_x)) / static_cast<float>(dst_w);
+  const float y_factor =
+      (static_cast<float>(screen.second) - static_cast<float>(dst_off_y)) / static_cast<float>(dst_h);
+
+  return {static_cast<int32_t>(x_factor * img_w), static_cast<int32_t>(y_factor * img_h)};
+}
+fwrk::Context Renderer2D::create_fwrk_context() const
+{
+  return fwrk::Context(
+      {.vulkan = {instance_.get(), device_.get_physical(), device_.get(), frames_in_flight},
+       .allocator = nullptr,
+       .debug_markers =
+           fwrk::DebugMarkerInfo{.cmd_begin = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+                                     vkGetInstanceProcAddr(instance_.get(), "vkCmdBeginDebugUtilsLabelEXT")),
+                                 .cmd_end = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+                                     vkGetInstanceProcAddr(instance_.get(), "vkCmdEndDebugUtilsLabelEXT"))},
+       .timestamps = true});
 }
