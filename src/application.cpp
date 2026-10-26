@@ -6,7 +6,7 @@ struct QuitEvent {};
 
 Application::Application(const uint32_t window_width, const uint32_t window_height) :
     window_(event_dispatcher_, window_width, window_height, "everything.. seems to be in order."),
-    input_(event_dispatcher_), imgui_init_(window_.get()), renderer_(create_renderer())
+    input_(event_dispatcher_), user_interface_(window_.get()), renderer_(create_renderer())
 {
 }
 
@@ -32,17 +32,16 @@ void Application::run()
       running = false;
     }
 
-    if (input_.mouse_pressed(MouseButton::Left)) {
-      renderer_.start_plot();
-    }
-    if (input_.mouse_released(MouseButton::Left)) {
-      renderer_.end_plot();
+    if (input_.mouse_down(MouseButton::Left) && !UserInterface::consuming()) {
+      renderer_.plot();
     }
 
-    ImGui_ImplSDL3_NewFrame();
+    Renderer2D::imgui_new_frame();
+    auto* imgui_draw_data = user_interface_.render(renderer_);
 
-    renderer_.render(
-        {.window_size = {window_.width(), window_.height()}, .mouse_pos = {input_.mouse_x(), input_.mouse_y()}});
+    renderer_.render({.window_size = {window_.width(), window_.height()},
+                      .mouse_pos = {input_.mouse_x(), input_.mouse_y()},
+                      .imgui_draw_data = imgui_draw_data});
   }
 }
 
@@ -50,8 +49,7 @@ void Application::poll_events()
 {
   SDL_Event event;
   while (SDL_PollEvent(&event)) {
-    ImGui_ImplSDL3_ProcessEvent(&event);
-
+    UserInterface::process_event(event);
     switch (event.type) {
       case SDL_EVENT_QUIT:
         event_dispatcher_.dispatch(QuitEvent{});

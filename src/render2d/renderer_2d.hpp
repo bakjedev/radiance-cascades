@@ -7,6 +7,8 @@
 #include "backend/swapchain.hpp"
 #include "framework/context.hpp"
 
+struct ImDrawData;
+
 class Renderer2D {
 public:
   struct RendererCreateInfo {
@@ -19,24 +21,13 @@ public:
   struct RenderInfo {
     std::pair<int, int> window_size;
     std::pair<int, int> mouse_pos;
+    ImDrawData* imgui_draw_data;
   };
-
-  explicit Renderer2D(const RendererCreateInfo& create_info);
-  ~Renderer2D();
-
-  void render(RenderInfo info);
-
-  void window_resize(int width, int height);
-
-  void start_plot();
-  void end_plot();
-
-private:
-  static constexpr uint32_t frames_in_flight = 2;
 
   struct Renderer2DConfig {
     struct DrawConfig {
       uint32_t size{50};
+      uint8_t material{1};
     } drawing;
 
     struct SceneSize {
@@ -64,6 +55,27 @@ private:
     float paddington{};
   };
 
+  explicit Renderer2D(const RendererCreateInfo& create_info);
+  ~Renderer2D();
+
+  void render(RenderInfo info);
+
+  void window_resize(int width, int height);
+
+  void plot();
+
+  static void imgui_new_frame();
+  void request_recompile();
+
+  [[nodiscard]] fwrk::Graph::FrameTimings get_timings();
+
+  Renderer2DConfig& config() { return config_; }
+  const std::vector<Material>& materials() { return materials_; }
+
+private:
+  static constexpr uint32_t frames_in_flight = 2;
+
+
   bool begin_frame();
   void run_frame();
   void end_frame();
@@ -79,7 +91,7 @@ private:
   void pull_push_pass(vk::CommandBuffer cmd);
   void composite_pass(vk::CommandBuffer cmd);
   void blit_pass(vk::CommandBuffer cmd);
-  void imgui_pass(vk::CommandBuffer cmd);
+  void imgui_pass(vk::CommandBuffer cmd) const;
 
   Renderer2DConfig config_;
   RenderInfo info_;
@@ -178,8 +190,8 @@ private:
   bool should_compile_ = true;
 
   std::vector<Material> materials_;
-  uint8_t draw_material_ = 1;
-  bool should_draw = false;
+  bool should_draw_ = false;
+  bool did_draw_ = false;
 
   uint32_t final_jfa_{0};
 
@@ -191,13 +203,6 @@ private:
 
   uint32_t light_mips_{0};
 
-  static constexpr uint32_t PerfHistory = 512;
-  using Timings = std::array<float, PerfHistory>;
-  using PerfPass = std::pair<std::string, Timings>;
-  std::vector<PerfPass> perf_passes_;
-  Timings perf_frame_{};
-  uint32_t perf_head_{0};
-
   void import_swapchain_images();
   void import_images();
 
@@ -208,5 +213,5 @@ private:
 
   [[nodiscard]] std::pair<int32_t, int32_t> screen_to_pos(const std::pair<int32_t, int32_t>& screen) const;
 
-  fwrk::Context create_fwrk_context() const;
+  [[nodiscard]] fwrk::Context create_fwrk_context() const;
 };

@@ -1,12 +1,12 @@
 #pragma once
 #include "event_dispatcher.hpp"
 #include "file_system.hpp"
-#include "imgui_init.hpp"
 #include "input.hpp"
 #include "render2d/renderer_2d.hpp"
 #include "resource/resource_manager.hpp"
 #include "resource/types/shader_resource.hpp"
 #include "sdl_init.hpp"
+#include "user_interface.hpp"
 #include "window.hpp"
 
 class Application {
@@ -24,7 +24,7 @@ private:
   Input input_;
   FileSystem file_system_;
   ResourceManager<ShaderResource> resource_manager_;
-  ImGuiInit imgui_init_;
+  UserInterface user_interface_;
   Renderer2D renderer_;
   bool running = true;
 

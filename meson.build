@@ -42,6 +42,7 @@ sources = files(
     'src/render2d/backend/device.cpp',
     'src/render2d/backend/swapchain.cpp',
     'src/render2d/backend/frame.cpp',
+    'src/user_interface.cpp',
 )
 
 slangc = find_program('slangc')

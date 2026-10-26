@@ -2,12 +2,7 @@
 #include <cmath>
 #include "backend/descriptor.hpp"
 #include "backend/pipeline.hpp"
-#include "imgui.h"
 #include "imgui_impl_vulkan.h"
-#include "implot.h"
-#include "src/event_dispatcher.hpp"
-#include "src/resource/resource_manager.hpp"
-#include "src/resource/types/shader_resource.hpp"
 
 namespace {
   struct DrawPushConstant {
@@ -448,17 +443,13 @@ void Renderer2D::window_resize(const int width, const int height)
   import_swapchain_images();
 }
 
-void Renderer2D::start_plot()
-{
-  should_draw = true;
-  should_compile_ = true;
-}
+void Renderer2D::plot() { should_draw_ = true; }
 
-void Renderer2D::end_plot()
-{
-  should_draw = false;
-  should_compile_ = true;
-}
+void Renderer2D::imgui_new_frame() { ImGui_ImplVulkan_NewFrame(); }
+
+void Renderer2D::request_recompile() { should_compile_ = true; }
+
+fwrk::Graph::FrameTimings Renderer2D::get_timings() { return context_.graph().get_timings(); }
 
 bool Renderer2D::begin_frame()
 {
@@ -488,6 +479,10 @@ void Renderer2D::run_frame()
   const Frame& frame = frames_.at(current_frame_);
   fwrk::Graph& graph = context_.graph();
 
+  if (should_draw_ != did_draw_) {
+    should_compile_ = true;
+  }
+
   if (should_compile_) {
     should_compile_ = false;
     compile();
@@ -496,6 +491,9 @@ void Renderer2D::run_frame()
   context_.update_proxy(swapchain_proxy_, swapchain_imports_[image_index_]);
 
   graph.execute(frame.command_buffer.get(), current_frame_);
+
+  did_draw_ = should_draw_;
+  should_draw_ = false;
 }
 
 void Renderer2D::end_frame()
@@ -540,7 +538,7 @@ void Renderer2D::compile()
   // ------------------
   // Passes
   // ------------------
-  if (should_draw) {
+  if (should_draw_) {
     graph.add_compute_pass("Draw")
         .set_storage_image_write({.resource = {.id = draw_id_}})
         .set_execute([this](vk::CommandBuffer cmd) { draw_pass(cmd); });
@@ -623,8 +621,11 @@ void Renderer2D::draw_pass(vk::CommandBuffer cmd)
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
   const auto [draw_x, draw_y] = screen_to_pos(info_.mouse_pos);
-  const DrawPushConstant push_constant{
-      .draw_id = DrawImage, .s = config_.drawing.size, .x = draw_x, .y = draw_y, .material_id = draw_material_};
+  const DrawPushConstant push_constant{.draw_id = DrawImage,
+                                       .s = config_.drawing.size,
+                                       .x = draw_x,
+                                       .y = draw_y,
+                                       .material_id = config_.drawing.material};
 
   cmd.pushConstants(draw_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant),
                     &push_constant);
@@ -930,144 +931,9 @@ void Renderer2D::blit_pass(vk::CommandBuffer cmd)
   cmd.draw(3, 1, 0, 0);
 }
 
-void Renderer2D::imgui_pass(vk::CommandBuffer cmd)
+void Renderer2D::imgui_pass(vk::CommandBuffer cmd) const
 {
-  ImGui_ImplVulkan_NewFrame();
-  ImGui::NewFrame();
-  ImGui::Begin("Config");
-
-  constexpr uint32_t min_draw_size = 1;
-  constexpr uint32_t max_draw_size = 100;
-  ImGui::SliderScalar("Draw size", ImGuiDataType_U32, &config_.drawing.size, &min_draw_size, &max_draw_size);
-
-  ImGui::Text("Scene size");
-  ImGui::SameLine();
-  ImGui::PushItemWidth(80.0);
-  ImGui::InputScalar("W", ImGuiDataType_U32, &config_.scene_size.width);
-  ImGui::SameLine();
-  ImGui::InputScalar("H", ImGuiDataType_U32, &config_.scene_size.height);
-  ImGui::PopItemWidth();
-
-  constexpr uint32_t min_cascades = 1;
-  constexpr uint32_t max_cascades = 10;
-  ImGui::SliderScalar("Cascades", ImGuiDataType_U32, &config_.cascades.cascades, &min_cascades, &max_cascades);
-
-  ImGui::InputFloat("Base Spacing", &config_.cascades.base_spacing);
-  ImGui::InputFloat("Base Interval", &config_.cascades.base_interval);
-  ImGui::InputFloat("Base Length", &config_.cascades.base_length);
-  ImGui::SliderScalar("Bounces", ImGuiDataType_U32, &config_.cascades.bounce, &min_cascades, &max_cascades);
-
-  ImGui::Text("Materials:");
-  for (size_t i = 0; i < materials_.size(); i++) {
-    const Material& material = materials_.at(i);
-    const ImVec4 color{material.color[0], material.color[1], material.color[2], 1.0f};
-    const ImVec4 radiance{material.radiance[0], material.radiance[1], material.radiance[2], 1.0f};
-    const bool has_radiance = !(radiance.x == 0.0f && radiance.y == 0.0f && radiance.z == 0.0f);
-    if (has_radiance) {
-      ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 3.0f);
-    }
-    if (i > 0) ImGui::SameLine();
-    if (ImGui::ColorButton((std::string("mat") + std::to_string(i)).c_str(), has_radiance ? radiance : color,
-                           ImGuiColorEditFlags_NoTooltip)) {
-      draw_material_ = static_cast<uint8_t>(i);
-    }
-
-    if (has_radiance) {
-      ImGui::PopStyleVar();
-
-      if (ImGui::IsItemHovered()) {
-        if (ImGui::BeginTooltip()) {
-          ImGui::Text("Base color:");
-          ImGui::SameLine();
-          ImGui::ColorButton((std::string("mattooltip") + std::to_string(i)).c_str(), color,
-                             ImGuiColorEditFlags_NoTooltip);
-          ImGui::EndTooltip();
-        }
-      }
-    }
-  }
-
-  ImGui::SliderFloat("Rim", &config_.composite.rim, 0.0f, 100.0f);
-
-  if (ImGui::Button("Recompile framework")) {
-    should_compile_ = true;
-  }
-  ImGui::End();
-
-  auto ns_to_ms = [](const uint64_t ns) { return static_cast<float>(ns) / 1000000.0f; };
-  const fwrk::Graph::FrameTimings timings = context_.graph().get_timings();
-
-  for (auto& [_, times]: perf_passes_) times[perf_head_] = 0.0f;
-  for (const auto& pass_timing: timings.passes) {
-    const float ms = ns_to_ms(pass_timing.end - pass_timing.begin);
-
-    PerfPass* pass = nullptr;
-    for (auto& perf_pass: perf_passes_) {
-      if (perf_pass.first == pass_timing.name) {
-        pass = &perf_pass;
-        break;
-      }
-    }
-    if (!pass) {
-      pass = &perf_passes_.emplace_back(pass_timing.name, Timings{});
-    }
-
-    pass->second[perf_head_] = ms;
-  }
-
-  std::erase_if(perf_passes_, [](const PerfPass& pass) {
-    return std::ranges::all_of(pass.second, [](const float time) { return time == 0.0f; });
-  });
-
-  const float frame_ms = ns_to_ms(timings.end - timings.begin);
-  perf_frame_[perf_head_] = frame_ms;
-  perf_head_ = (perf_head_ + 1) % PerfHistory;
-
-  constexpr auto xs = [] {
-    Timings arr{};
-    for (uint32_t i = 0; i < PerfHistory; i++) arr[i] = static_cast<float>(i);
-    return arr;
-  }();
-
-  ImGui::Begin("Performance");
-  ImPlot::PushStyleVar(ImPlotStyleVar_FitPadding, ImVec2(0.0f, 0.1f));
-  if (ImPlot::BeginPlot("Pass timings")) {
-    ImPlot::SetupAxes("frame", "time (ms)",
-                      ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_LockMin | ImPlotAxisFlags_LockMax,
-                      ImPlotAxisFlags_AutoFit);
-    ImPlot::SetupAxisLimits(ImAxis_X1, 0, PerfHistory - 1, ImPlotCond_Always);
-    ImPlot::SetupAxisFormat(ImAxis_Y1, "%.2f ms");
-    ImPlot::SetupLegend(ImPlotLocation_South, ImPlotLegendFlags_Outside);
-
-    Timings ys1{0.0f};
-    Timings ys2{0.0f};
-
-    for (const auto& [name, pass_times]: perf_passes_) {
-      for (uint32_t i = 0; i < PerfHistory; i++) {
-        ys2[i] = ys1[i] + pass_times[(perf_head_ + i) % PerfHistory];
-      }
-
-      uint32_t latest = (perf_head_ + PerfHistory - 1) % PerfHistory;
-      const std::string label = std::format("{:10} {:6.2f} ms###{}", name, pass_times[latest], name);
-
-      const ImPlotSpec spec{ImPlotProp_FillColor, IMPLOT_AUTO_COL, ImPlotProp_FillAlpha, 0.85f};
-      ImPlot::PlotShaded(label.c_str(), xs.data(), ys1.data(), ys2.data(), PerfHistory, spec);
-
-      ys1.swap(ys2);
-    }
-
-    constexpr float sixty_fps = 1000.0f / 60.0f;
-    const ImPlotSpec inf_spec{ImPlotProp_Flags, static_cast<int>(ImPlotInfLinesFlags_Horizontal) |
-                                                    static_cast<int>(ImPlotItemFlags_NoLegend)};
-    ImPlot::PlotInfLines("16.677ms", &sixty_fps, 1, inf_spec);
-
-    ImPlot::EndPlot();
-  }
-  ImPlot::PopStyleVar();
-  ImGui::End();
-
-  ImGui::Render();
-  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+  ImGui_ImplVulkan_RenderDrawData(info_.imgui_draw_data, cmd);
 }
 
 void Renderer2D::import_swapchain_images()
