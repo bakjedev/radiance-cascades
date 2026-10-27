@@ -94,14 +94,8 @@ void UserInterface::config_panel(Renderer2D& renderer)
   }
 
   ImGui::SliderFloat("Rim", &cfg.composite.rim, 0.0f, 100.0f);
-
-  const uint32_t mip_count = renderer.light_mip_count();
-  if (mip_count > 0) {
-    constexpr uint32_t min_level = 0;
-    const uint32_t max_level = mip_count - 1;
-    ImGui::SliderScalar("Sprite Light Coarse Level", ImGuiDataType_U32, &cfg.composite.sprite_light_coarse_level,
-                        &min_level, &max_level);
-  }
+  constexpr uint32_t blur_step = 1;
+  ImGui::InputScalar("Blur Radius", ImGuiDataType_U32, &cfg.composite.blur_radius, &blur_step);
 
   if (ImGui::Button("Recompile framework")) {
     renderer.request_recompile();

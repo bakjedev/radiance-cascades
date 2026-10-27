@@ -10,3 +10,7 @@ struct Material {
     float3 base_color;
     float3 radiance;
 }
+
+static const uint AIR = 0;
+static const uint TERRAIN = 1;
+static const uint SPRITE = 2;

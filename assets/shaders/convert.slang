@@ -37,7 +37,7 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
 
     bool solid = mat_id > 0;
 
-    out.color = float4(mat.base_color, solid ? 1.0 / 255.0 : 0.0);
+    out.color = float4(mat.base_color, solid ? float(TERRAIN) / 255.0 : float(AIR));
     out.radiance = mat.radiance;
     out.jfa = solid ? int4(coord, -1, -1) : int4(-1, -1, coord);
 

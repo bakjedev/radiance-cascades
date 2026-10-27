@@ -45,7 +45,7 @@ public:
     } cascades;
 
     struct CompositeConfig {
-      uint32_t sprite_light_coarse_level{2};
+      uint32_t blur_radius{120};
       float rim{12.0f};
     } composite;
   };
@@ -87,7 +87,6 @@ public:
 
   Renderer2DConfig& config() { return config_; }
   const std::vector<Material>& materials() { return materials_; }
-  [[nodiscard]] uint32_t light_mip_count() const { return light_mips_; }
 
 private:
   static constexpr uint32_t frames_in_flight = 2;
@@ -119,7 +118,7 @@ private:
   void sdf_pass(vk::CommandBuffer cmd);
   void cascades_pass(vk::CommandBuffer cmd, bool first = true);
   void light_pass(vk::CommandBuffer cmd);
-  void pull_push_pass(vk::CommandBuffer cmd);
+  void blur_pass(vk::CommandBuffer cmd);
   void composite_pass(vk::CommandBuffer cmd);
   void blit_pass(vk::CommandBuffer cmd);
   void imgui_pass(vk::CommandBuffer cmd) const;
@@ -163,10 +162,9 @@ private:
   vk::UniqueShaderModule light_shader_module_;
   vk::UniquePipeline light_pipeline_;
 
-  vk::UniquePipelineLayout pull_push_pipeline_layout_;
-  vk::UniqueShaderModule pull_push_shader_module_;
-  vk::UniquePipeline pull_pipeline_;
-  vk::UniquePipeline push_pipeline_;
+  vk::UniquePipelineLayout blur_pipeline_layout_;
+  vk::UniqueShaderModule blur_shader_module_;
+  vk::UniquePipeline blur_pipeline_;
 
   vk::UniquePipelineLayout composite_pipeline_layout_;
   vk::UniqueShaderModule composite_shader_module_;
@@ -207,8 +205,12 @@ private:
   fwrk::ResourceID cascades_id_;
 
   std::optional<Image> light_image_;
-  std::vector<vk::UniqueImageView> light_views_;
+  vk::UniqueImageView light_view_;
   fwrk::ResourceID light_id_;
+
+  std::optional<Image> blur_image_;
+  vk::UniqueImageView blur_view_;
+  fwrk::ResourceID blur_id_;
 
   std::optional<Image> composite_image_;
   vk::UniqueImageView composite_view_;
@@ -240,7 +242,6 @@ private:
   uint32_t base_probe_size_{0};
   float base_probe_spacing_{0.0f};
   float base_probe_length_{0.0f};
-  uint32_t light_mips_{0};
 
   void import_swapchain_images();
   void import_images();

@@ -57,7 +57,7 @@ FSOutput fs_main(VSOutput input) {
     FSOutput out;
     float4 color = textures[input.tex].Sample(samplers[0], input.uv);
     if (color.a == 0.0) discard;
-    out.color = float4(color.xyz * input.tint, 2.0 / 255.0);
+    out.color = float4(color.xyz * input.tint, float(SPRITE) / 255.0);
     out.radiance = 0.0;
     out.jfa = int4(int2(input.pos.xy), -1, -1);
     return out;

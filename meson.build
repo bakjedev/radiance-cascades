@@ -59,7 +59,7 @@ shaders = [
     'light.slang',
     'composite.slang',
     'blit.slang',
-    'pull_push.slang',
+    'blur.slang',
     'imgui.slang'
 ]
 

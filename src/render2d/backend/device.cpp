@@ -49,6 +49,7 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
   }
 
   if (!features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingPartiallyBound ||
+      !features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingStorageBufferUpdateAfterBind ||
       !features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().shaderStorageImageArrayNonUniformIndexing ||
       !features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().runtimeDescriptorArray) {
     return false;
@@ -126,6 +127,8 @@ void Device::create_device()
   feature_chain.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = vk::True;
 
   feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingPartiallyBound = vk::True;
+  feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingStorageBufferUpdateAfterBind =
+      vk::True;
   feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().runtimeDescriptorArray = vk::True;
   feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().shaderStorageImageArrayNonUniformIndexing =
       vk::True;
