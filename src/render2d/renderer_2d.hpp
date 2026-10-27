@@ -3,6 +3,7 @@
 #include "backend/device.hpp"
 #include "backend/frame.hpp"
 #include "backend/image.hpp"
+#include "backend/immediate_submit.hpp"
 #include "backend/instance.hpp"
 #include "backend/swapchain.hpp"
 #include "framework/context.hpp"
@@ -44,6 +45,7 @@ public:
     } cascades;
 
     struct CompositeConfig {
+      uint32_t sprite_light_coarse_level{2};
       float rim{12.0f};
     } composite;
   };
@@ -55,6 +57,17 @@ public:
     float paddington{};
   };
 
+  struct Texture {
+    uint32_t id;
+  };
+
+  struct Sprite {
+    Texture texture;
+    std::pair<float, float> pos;
+    std::pair<float, float> size = {1.0f, 1.0f};
+    std::tuple<float, float, float> tint = {1.0f, 1.0f, 1.0f};
+  };
+
   explicit Renderer2D(const RendererCreateInfo& create_info);
   ~Renderer2D();
 
@@ -62,7 +75,10 @@ public:
 
   void window_resize(int width, int height);
 
+  Texture create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size);
+
   void plot();
+  void draw_sprite(Sprite sprite);
 
   static void imgui_new_frame();
   void request_recompile();
@@ -71,10 +87,24 @@ public:
 
   Renderer2DConfig& config() { return config_; }
   const std::vector<Material>& materials() { return materials_; }
+  [[nodiscard]] uint32_t light_mip_count() const { return light_mips_; }
 
 private:
   static constexpr uint32_t frames_in_flight = 2;
+  static constexpr uint32_t max_sprites = 4096;
 
+  struct SpriteGPU {
+    float tint[3];
+    uint32_t texture;
+    float pos[2];
+    float size[2];
+
+    explicit SpriteGPU(const Sprite& sprite) :
+        tint(std::get<0>(sprite.tint), std::get<1>(sprite.tint), std::get<2>(sprite.tint)), texture(sprite.texture.id),
+        pos(sprite.pos.first, sprite.pos.second), size(sprite.size.first, sprite.size.second)
+    {
+    }
+  };
 
   bool begin_frame();
   void run_frame();
@@ -84,6 +114,7 @@ private:
 
   void draw_pass(vk::CommandBuffer cmd);
   void convert_pass(vk::CommandBuffer cmd);
+  void sprite_pass(vk::CommandBuffer cmd);
   void jfa_pass(vk::CommandBuffer cmd);
   void sdf_pass(vk::CommandBuffer cmd);
   void cascades_pass(vk::CommandBuffer cmd, bool first = true);
@@ -102,6 +133,7 @@ private:
   std::array<Frame, frames_in_flight> frames_;
   std::vector<vk::UniqueSemaphore> submit_semaphores_;
   fwrk::Context context_;
+  ImmediateSubmit immediate_;
 
   vk::UniquePipelineLayout draw_pipeline_layout_;
   vk::UniqueShaderModule draw_shader_module_;
@@ -110,6 +142,10 @@ private:
   vk::UniquePipelineLayout convert_pipeline_layout_;
   vk::UniqueShaderModule convert_shader_module_;
   vk::UniquePipeline convert_pipeline_;
+
+  vk::UniquePipelineLayout sprite_pipeline_layout_;
+  vk::UniqueShaderModule sprite_shader_module_;
+  vk::UniquePipeline sprite_pipeline_;
 
   vk::UniquePipelineLayout jfa_pipeline_layout_;
   vk::UniqueShaderModule jfa_shader_module_;
@@ -178,6 +214,8 @@ private:
   vk::UniqueImageView composite_view_;
   fwrk::ResourceID composite_id_;
 
+  std::vector<std::pair<Image, vk::UniqueImageView>> texture_images_;
+
   std::optional<Buffer> material_buffer_;
   std::optional<Buffer> ubo_;
 
@@ -193,14 +231,15 @@ private:
   bool should_draw_ = false;
   bool did_draw_ = false;
 
-  uint32_t final_jfa_{0};
+  std::vector<SpriteGPU> sprites_;
+  void* sprites_mapped = nullptr;
 
+  uint32_t final_jfa_{0};
   uint32_t cascades_width_{0};
   uint32_t cascades_height_{0};
   uint32_t base_probe_size_{0};
   float base_probe_spacing_{0.0f};
   float base_probe_length_{0.0f};
-
   uint32_t light_mips_{0};
 
   void import_swapchain_images();
@@ -210,6 +249,8 @@ private:
   void create_cascade_image();
 
   void update_descriptor();
+
+  void upload_sprites() const;
 
   [[nodiscard]] std::pair<int32_t, int32_t> screen_to_pos(const std::pair<int32_t, int32_t>& screen) const;
 

@@ -18,6 +18,12 @@ struct BufferDesc {
     return *this;
   }
 
+  BufferDesc& set_allocate_flags(const VmaAllocationCreateFlags allocate_flags)
+  {
+    alloc_flags = allocate_flags;
+    return *this;
+  }
+
   BufferDesc& set_size(const vk::DeviceSize buffer_size)
   {
     size = buffer_size;
@@ -67,6 +73,19 @@ public:
   [[nodiscard]] vk::DeviceSize size() const { return size_; }
   [[nodiscard]] bool valid() const { return buffer_; }
 
+  void flush_allocation(const VkDeviceSize offset, const VkDeviceSize size) const
+  {
+    vmaFlushAllocation(allocator_, allocation_, offset, size);
+  }
+
+  [[nodiscard]] void* get_mapped_data() const { return mapped_; }
+
+  template<typename T>
+  T* get_mapped_data() const
+  {
+    return static_cast<T*>(mapped_);
+  }
+
 private:
   void create(const BufferDesc& desc)
   {
@@ -77,12 +96,14 @@ private:
     allocation_create_info.usage = desc.memory_usage;
     allocation_create_info.flags = desc.alloc_flags;
 
+    VmaAllocationInfo info;
     const VkBufferCreateInfo create_info_c = create_info;
     VkBuffer buffer_c;
-    if (vmaCreateBuffer(allocator_, &create_info_c, &allocation_create_info, &buffer_c, &allocation_, nullptr) !=
+    if (vmaCreateBuffer(allocator_, &create_info_c, &allocation_create_info, &buffer_c, &allocation_, &info) !=
         VK_SUCCESS) {
       throw std::runtime_error("Failed to create buffer with VMA");
     }
+    mapped_ = info.pMappedData;
 
     if (!desc.debug_name.empty()) {
       vk::DebugUtilsObjectNameInfoEXT name_info{};
@@ -121,4 +142,6 @@ private:
   vk::Buffer buffer_ = nullptr;
   VmaAllocation allocation_ = nullptr;
   vk::DeviceSize size_{};
+
+  void* mapped_ = nullptr;
 };

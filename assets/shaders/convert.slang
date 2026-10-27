@@ -35,9 +35,11 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     uint mat_id = texturesU[pc.draw_id].Load(int3(coord, 0));
     Material mat = storageBuffers[0][mat_id];
 
-    out.color = float4(mat.base_color, 1.0);
+    bool solid = mat_id > 0;
+
+    out.color = float4(mat.base_color, solid ? 1.0 / 255.0 : 0.0);
     out.radiance = mat.radiance;
-    out.jfa = mat_id > 0 ? int4(coord, -1, -1) : int4(-1, -1, coord);
+    out.jfa = solid ? int4(coord, -1, -1) : int4(-1, -1, coord);
 
     return out;
 }

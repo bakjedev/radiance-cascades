@@ -19,7 +19,7 @@ static const int2 probe_offsets[] = {
     int2(1, 1)
 };
 
-float3 irradiance(float2 pos, PushConstant pc) {
+float4 irradiance(float2 pos, PushConstant pc) {
     float2 base_coord = pos / pc.spacing - 0.5;
     int2 base_index = int2(floor(base_coord));
     float2 ratio = base_coord - float2(base_index);
@@ -52,7 +52,7 @@ float3 irradiance(float2 pos, PushConstant pc) {
         sum += weights[i] * sub_sum / dir_count;
         weight_sum += weights[i];
     }
-    return weight_sum > 0.0 ? sum / weight_sum : 0.0;
+    return weight_sum > 0.0 ? float4(sum / weight_sum, 1.0) : float4(0.0);
 }
 
 [shader("compute")]
@@ -69,6 +69,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     }
 
     float2 center = float2(local) + 0.5;
-    float3 emitted = irradiance(center, pc);
-    storageImagesF[pc.light_id].Store(local, float4(emitted, 1.0));
+    float4 emitted = irradiance(center, pc);
+    storageImagesF[pc.light_id].Store(local, emitted);
 }

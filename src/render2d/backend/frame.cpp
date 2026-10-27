@@ -2,7 +2,7 @@
 
 #include "device.hpp"
 
-void create_frame(Frame& frame, const Device& device)
+void create_frame(Frame& frame, const Device& device, const vk::DeviceSize sprites_buffer_size)
 {
   constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
   vk::FenceCreateInfo fence_create_info{};
@@ -23,4 +23,12 @@ void create_frame(Frame& frame, const Device& device)
   allocate_info.setCommandBufferCount(1);
 
   frame.command_buffer = std::move(device.get().allocateCommandBuffersUnique(allocate_info).front());
+
+  frame.sprites_buffer.emplace(
+      device.get_allocator(), device.get(),
+      BufferDesc{}
+          .set_size(sprites_buffer_size)
+          .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
+          .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
+          .set_debug_name("Sprites"));
 }

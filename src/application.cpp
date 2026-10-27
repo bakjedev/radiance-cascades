@@ -20,6 +20,18 @@ void Application::run()
 
   file_system_.add_route("assets", "../assets");
 
+  // Renderer2D::Texture mario_texture{};
+  // Renderer2D::Texture test_texture{};
+  // {
+  //   auto mario_image_resource =
+  //       resource_manager_.create_from_file<ImageResource>("mario.png", ImageResourceLoader{&file_system_});
+  //   mario_texture = renderer_.create_texture(mario_image_resource->pixels, mario_image_resource->size);
+  //
+  //   auto test_image_resource =
+  //       resource_manager_.create_from_file<ImageResource>("test.png", ImageResourceLoader{&file_system_});
+  //   test_texture = renderer_.create_texture(test_image_resource->pixels, test_image_resource->size);
+  // }
+
   while (running) {
     input_.begin_frame();
     poll_events();
@@ -38,6 +50,9 @@ void Application::run()
 
     Renderer2D::imgui_new_frame();
     auto* imgui_draw_data = user_interface_.render(renderer_);
+
+    // renderer_.draw_sprite({.texture = mario_texture, .pos = {512.0f, 812.0f}, .size = {10.0f, 10.0f}});
+    // renderer_.draw_sprite({.texture = test_texture, .pos = {512.0f, 512.0f}, .size = {2.0f, 2.0f}});
 
     renderer_.render({.window_size = {window_.width(), window_.height()},
                       .mouse_pos = {input_.mouse_x(), input_.mouse_y()},

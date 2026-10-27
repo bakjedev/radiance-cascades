@@ -25,6 +25,7 @@ sdl3_dep = dependency('sdl3', include_type : 'system', default_options : ['defau
 vma_dep = dependency('VulkanMemoryAllocator', include_type : 'system')
 imgui_dep = dependency('imgui', include_type : 'system', default_options : ['default_library=static'])
 implot_dep = dependency('implot', include_type : 'system', default_options : ['default_library=static'])
+stb_dep = dependency('stb')
 
 if compiler.get_argument_syntax() == 'msvc'
     add_project_arguments('/external:anglebrackets', '/external:W0', language : 'cpp')
@@ -37,6 +38,7 @@ sources = files(
     'src/file_system.cpp',
     'src/input.cpp',
     'src/resource/types/shader_resource.cpp',
+    'src/resource/types/image_resource.cpp',
     'src/render2d/renderer_2d.cpp',
     'src/render2d/backend/instance.cpp',
     'src/render2d/backend/device.cpp',
@@ -50,6 +52,7 @@ slangc = find_program('slangc')
 shaders = [
     'draw.slang',
     'convert.slang',
+    'sprite.slang',
     'jfa.slang',
     'sdf.slang',
     'cascades.slang',
@@ -71,4 +74,4 @@ foreach shader : shaders
     )
 endforeach
 
-executable('radiance-cascades', sources, compiled_shaders, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep, imgui_dep, implot_dep])
+executable('radiance-cascades', sources, compiled_shaders, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep, imgui_dep, implot_dep, stb_dep])

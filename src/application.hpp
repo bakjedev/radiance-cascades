@@ -4,6 +4,7 @@
 #include "input.hpp"
 #include "render2d/renderer_2d.hpp"
 #include "resource/resource_manager.hpp"
+#include "resource/types/image_resource.hpp"
 #include "resource/types/shader_resource.hpp"
 #include "sdl_init.hpp"
 #include "user_interface.hpp"
@@ -23,7 +24,7 @@ private:
   Window window_;
   Input input_;
   FileSystem file_system_;
-  ResourceManager<ShaderResource> resource_manager_;
+  ResourceManager<ShaderResource, ImageResource> resource_manager_;
   UserInterface user_interface_;
   Renderer2D renderer_;
   bool running = true;
