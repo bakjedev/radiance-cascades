@@ -220,6 +220,8 @@ private:
 
   std::optional<Buffer> material_buffer_;
   std::optional<Buffer> ubo_;
+  std::optional<Buffer> gaussian_weights_buffer_;
+  std::optional<Buffer> gaussian_offsets_buffer_;
 
   std::vector<fwrk::ResourceID> swapchain_imports_;
   fwrk::ResourceID swapchain_proxy_;
@@ -242,6 +244,9 @@ private:
   uint32_t base_probe_size_{0};
   float base_probe_spacing_{0.0f};
   float base_probe_length_{0.0f};
+  uint32_t previous_gaussian_radius_{0};
+  std::vector<float> gaussian_weights_;
+  std::vector<float> gaussian_offsets_;
 
   void import_swapchain_images();
   void import_images();
@@ -252,6 +257,8 @@ private:
   void update_descriptor();
 
   void upload_sprites() const;
+
+  void calculate_gaussian(uint32_t radius, float k);
 
   [[nodiscard]] std::pair<int32_t, int32_t> screen_to_pos(const std::pair<int32_t, int32_t>& screen) const;
 

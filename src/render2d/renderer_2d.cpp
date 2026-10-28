@@ -70,7 +70,9 @@ namespace {
     uint32_t blur_id;
     uint32_t blur_rw_id;
     bool resolving;
-    uint32_t radius;
+    uint32_t sample_count;
+    uint32_t weights_id;
+    uint32_t offsets_id;
   };
 
   struct CompositePushConstant {
@@ -108,6 +110,8 @@ namespace {
 
   enum StorageBuffers {
     MaterialBuffer = 0,
+    GaussianWeightsBuffer,
+    GaussianOffsetsBuffer,
     SpriteBuffer,
   };
 } // namespace
@@ -151,10 +155,27 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
 
 
   ubo_.emplace(device_.get_allocator(), device_.get(),
-               BufferDesc{.alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}
+               BufferDesc{}
                    .set_size(sizeof(UBOData))
                    .set_usage(vk::BufferUsageFlagBits::eUniformBuffer)
+                   .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT)
                    .set_debug_name("UBO"));
+
+  gaussian_weights_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{}
+          .set_size(512 * sizeof(float))
+          .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
+          .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
+          .set_debug_name("Gaussian Weights"));
+
+  gaussian_offsets_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{}
+          .set_size(512 * sizeof(float))
+          .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
+          .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
+          .set_debug_name("Gaussian Offsets"));
 
   // ----------------------------------------
   // Sampler
@@ -200,6 +221,8 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
 
   DescriptorWriter{}
       .add_buffer(1, MaterialBuffer, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
+      .add_buffer(1, GaussianWeightsBuffer, vk::DescriptorType::eStorageBuffer, gaussian_weights_buffer_->buffer())
+      .add_buffer(1, GaussianOffsetsBuffer, vk::DescriptorType::eStorageBuffer, gaussian_offsets_buffer_->buffer())
       .add_image(3, 0, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, ubo_->buffer())
       .update(device_.get(), bindless_descriptor_set_);
@@ -598,6 +621,15 @@ void Renderer2D::run_frame()
     should_compile_ = true;
   }
 
+  if (config_.composite.blur_radius != previous_gaussian_radius_) {
+    calculate_gaussian(config_.composite.blur_radius, 3.0f);
+    std::memcpy(gaussian_weights_buffer_->get_mapped_data(), gaussian_weights_.data(),
+                gaussian_weights_.size() * sizeof(gaussian_weights_[0]));
+    std::memcpy(gaussian_offsets_buffer_->get_mapped_data(), gaussian_offsets_.data(),
+                gaussian_offsets_.size() * sizeof(gaussian_offsets_[0]));
+    previous_gaussian_radius_ = config_.composite.blur_radius;
+  }
+
   if (should_compile_) {
     should_compile_ = false;
     compile();
@@ -970,7 +1002,9 @@ void Renderer2D::blur_pass(vk::CommandBuffer cmd)
                                  .blur_id = BlurTexture,
                                  .blur_rw_id = BlurImage,
                                  .resolving = false,
-                                 .radius = config_.composite.blur_radius};
+                                 .sample_count = static_cast<uint32_t>(gaussian_weights_.size()),
+                                 .weights_id = GaussianWeightsBuffer,
+                                 .offsets_id = GaussianOffsetsBuffer};
 
   cmd.pushConstants(blur_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurPushConstant),
                     &push_constant);
@@ -1299,6 +1333,46 @@ void Renderer2D::upload_sprites() const
   DescriptorWriter{}
       .add_buffer(1, SpriteBuffer, vk::DescriptorType::eStorageBuffer, frame.sprites_buffer->buffer())
       .update(device_.get(), bindless_descriptor_set_);
+}
+
+void Renderer2D::calculate_gaussian(const uint32_t radius, const float k)
+{
+  const float sigma = static_cast<float>(radius) / k;
+  const float two_sigma_squared = 2.0f * sigma * sigma;
+
+  float weight_sum = 0.0f;
+  std::vector<float> weights;
+  weights.reserve(static_cast<size_t>(radius) + 1);
+  for (uint32_t i = 0; i <= radius; i++) {
+    const float weight = std::exp(-static_cast<float>(i * i) / two_sigma_squared);
+    weights.push_back(weight);
+    weight_sum += weight * (i == 0 ? 1.0f : 2.0f);
+  }
+  for (float& weight: weights) {
+    weight /= weight_sum;
+  }
+
+  gaussian_weights_.clear();
+  gaussian_offsets_.clear();
+
+  gaussian_weights_.push_back(weights[0]);
+  gaussian_offsets_.emplace_back(0.0f);
+
+  for (uint32_t i = 1; i <= radius; i += 2) {
+    if (i + 1 <= radius) {
+      const float w1 = weights[i];
+      const float w2 = weights[i + 1];
+
+      const float w3 = w1 + w2;
+      const float offset = (static_cast<float>(i) * w1 + static_cast<float>(i + 1) * w2) / w3;
+
+      gaussian_weights_.push_back(w3);
+      gaussian_offsets_.push_back(offset);
+    } else {
+      gaussian_weights_.emplace_back(weights[i]);
+      gaussian_offsets_.emplace_back(static_cast<float>(i));
+    }
+  }
 }
 
 std::pair<int32_t, int32_t> Renderer2D::screen_to_pos(const std::pair<int32_t, int32_t>& screen) const
