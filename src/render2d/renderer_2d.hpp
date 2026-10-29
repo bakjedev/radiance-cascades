@@ -46,7 +46,8 @@ public:
 
     struct CompositeConfig {
       uint32_t blur_radius{120};
-      float rim{12.0f};
+      float rim{50.0f};
+      bool aces{true};
     } composite;
   };
 
@@ -179,6 +180,7 @@ private:
   vk::DescriptorSet bindless_descriptor_set_;
 
   vk::UniqueSampler sampler_;
+  vk::UniqueSampler cascades_sampler_;
 
   std::optional<Image> draw_image_;
   vk::UniqueImageView draw_view_;

@@ -96,6 +96,7 @@ void UserInterface::config_panel(Renderer2D& renderer)
   ImGui::SliderFloat("Rim", &cfg.composite.rim, 0.0f, 100.0f);
   constexpr uint32_t blur_step = 1;
   ImGui::InputScalar("Blur Radius", ImGuiDataType_U32, &cfg.composite.blur_radius, &blur_step);
+  ImGui::Checkbox("ACES", &cfg.composite.aces);
 
   if (ImGui::Button("Recompile framework")) {
     renderer.request_recompile();
@@ -141,6 +142,7 @@ void UserInterface::performance_panel(Renderer2D& renderer)
   }();
 
   ImGui::Begin("Performance");
+  ImGui::Text("Frame time: %.2fms", static_cast<double>(frame_ms));
   ImPlot::PushStyleVar(ImPlotStyleVar_FitPadding, ImVec2(0.0f, 0.1f));
   if (ImPlot::BeginPlot("Pass timings")) {
     ImPlot::SetupAxes("frame", "time (ms)",

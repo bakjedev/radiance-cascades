@@ -2,6 +2,7 @@
 
 struct PushConstant {
     uint sdf_id;
+    uint cascades_rw_id;
     uint cascades_id;
     uint scene_rad_id;
     uint cascade_width;
@@ -19,11 +20,11 @@ struct PushConstant {
 
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
 [[vk::binding(0, 0)]] RWTexture2DArray<float4> storageImageArraysF[];
-
 [[vk::binding(1, 0)]] StructuredBuffer<Material> storageBuffers[];
-[[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
-
 [[vk::binding(2, 0)]] Texture2D textures[];
+[[vk::binding(2, 0)]] Texture2DArray textureArrays[];
+[[vk::binding(3, 0)]] SamplerState samplers[];
+[[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
 static const int2 probe_offsets[] = {
     int2(0, 0),
@@ -79,6 +80,18 @@ float4 merge(float4 n, float4 n1) {
     return float4(radiance, n.a * n1.a);
 }
 
+//https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
+uint part1by1(uint x) {
+    x &= 0x0000FFFF;
+    x = (x | (x << 8)) & 0x00FF00FF;
+    x = (x | (x << 4)) & 0x0F0F0F0F;
+    x = (x | (x << 2)) & 0x33333333;
+    x = (x | (x << 1)) & 0x55555555;
+    return x;
+}
+
+uint interval_to_dir(uint2 t) { return part1by1(t.x) | (part1by1(t.y) << 1); }
+
 [shader("compute")]
 [numthreads(8, 8)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc) {
@@ -92,7 +105,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     float2 origin = (float2(probe) + 0.5) * (pc.base_spacing * float(1 << pc.cascade_idx));
 
     int2 interval = local % probe_size;
-    int dir_index = interval.y * probe_size + interval.x;
+    int dir_index = int(interval_to_dir(uint2(interval)));
 
     float angle = 2.0 * PI * ((float(dir_index) + 0.5) / float(pc.base_probe_dir_count << (2 * pc.cascade_idx)));
     float2 dir = float2(cos(angle), sin(angle));
@@ -103,7 +116,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     // at the last cascade, no cascade above this to merge with
     if (pc.cascade_idx >= pc.cascade_count - 1) {
         float4 result = trace(origin + dir * start_t, origin + dir * end_t, ubo, pc);
-        storageImageArraysF[pc.cascades_id].Store(int3(local, pc.cascade_idx), result);
+        storageImageArraysF[pc.cascades_rw_id].Store(int3(local, pc.cascade_idx), result);
         return;
     }
 
@@ -116,7 +129,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     float4 weights = float4(0.0);
     int2 base_index = get_base_index(origin, float2(neighbour_spacing), weights);
 
-    int base_dir_index = dir_index * 4;
+    float2 inv_size = 1.0 / float2(pc.cascade_width, pc.cascade_height);
+    float2 dir_tile_center = float2(2 * interval + 1);
 
     float4 merged = float4(0.0);
     for (int i = 0; i < 4; i++) {
@@ -127,19 +141,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
 
         float4 result = trace(start, end, ubo, pc);
 
-        float4 radiance = 0;
-        for (int j = 0; j < 4; j++) {
-            int dir_idx = base_dir_index + j;
-            int2 dir_coord = int2(
-                    dir_idx % neighbour_size,
-                    dir_idx / neighbour_size
-            );
-            int2 texel = index * neighbour_size + dir_coord;
-            radiance += storageImageArraysF[pc.cascades_id].Load(int3(texel, pc.cascade_idx + 1)) / 4.0;
-        }
+        // hardware bilinear sampling the 4 directions, because of morton layout the 4 neighbours are now exactly under each texel in the next cascade
+        float2 point = float2(index * neighbour_size) + dir_tile_center;
+        float4 radiance = textureArrays[pc.cascades_id].SampleLevel(samplers[1], float3(point * inv_size, float(pc.cascade_idx + 1)), 0);
 
         merged += merge(result, radiance) * weights[i];
     }
 
-    storageImageArraysF[pc.cascades_id].Store(int3(local, pc.cascade_idx), merged);
+    storageImageArraysF[pc.cascades_rw_id].Store(int3(local, pc.cascade_idx), merged);
 }

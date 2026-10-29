@@ -36,6 +36,7 @@ namespace {
 
   struct CascadesPushConstant {
     uint32_t sdf_id;
+    uint32_t cascades_rw_id;
     uint32_t cascades_id;
     uint32_t scene_rad_id;
     uint32_t cascade_width;
@@ -86,9 +87,10 @@ namespace {
 
   struct BlitPushConstant {
     uint32_t composite_id;
+    bool aces;
   };
 
-  enum StorageDescriptors {
+  enum ImageDescriptors {
     DrawImage,
     JFAImage,
     SDFImage,
@@ -98,21 +100,27 @@ namespace {
     CompositeImage,
   };
 
-  enum SampledDescriptors {
+  enum TextureDescriptors {
     DrawTexture = 0,
     SceneColorTexture,
     SceneRadianceTexture,
     LightTexture,
     BlurTexture,
     CompositeTexture,
+    CascadesTexture,
     SpriteTextures,
   };
 
-  enum StorageBuffers {
+  enum BufferDescriptors {
     MaterialBuffer = 0,
     GaussianWeightsBuffer,
     GaussianOffsetsBuffer,
     SpriteBuffer,
+  };
+
+  enum SamplerDescriptors {
+    DefaultSampler = 0,
+    CascadesSampler,
   };
 } // namespace
 
@@ -180,8 +188,13 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
   // ----------------------------------------
   // Sampler
   // ----------------------------------------
-  constexpr vk::SamplerCreateInfo sampler_info{};
+  vk::SamplerCreateInfo sampler_info{};
   sampler_ = device_.get().createSamplerUnique(sampler_info);
+  sampler_info.setAddressModeU(vk::SamplerAddressMode::eClampToBorder);
+  sampler_info.setAddressModeV(vk::SamplerAddressMode::eClampToBorder);
+  sampler_info.setMinFilter(vk::Filter::eLinear);
+  sampler_info.setMagFilter(vk::Filter::eLinear);
+  cascades_sampler_ = device_.get().createSamplerUnique(sampler_info);
 
   // ----------------------------------------
   // Descriptors
@@ -223,7 +236,9 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
       .add_buffer(1, MaterialBuffer, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
       .add_buffer(1, GaussianWeightsBuffer, vk::DescriptorType::eStorageBuffer, gaussian_weights_buffer_->buffer())
       .add_buffer(1, GaussianOffsetsBuffer, vk::DescriptorType::eStorageBuffer, gaussian_offsets_buffer_->buffer())
-      .add_image(3, 0, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
+      .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
+      .add_image(3, CascadesSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
+                 cascades_sampler_.get())
       .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, ubo_->buffer())
       .update(device_.get(), bindless_descriptor_set_);
 
@@ -922,7 +937,8 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
   vk::DebugUtilsLabelEXT debug_label{{}, {1.0f, 1.0f, 1.0f, 1.0f}};
 
   CascadesPushConstant push_constant{.sdf_id = SDFImage,
-                                     .cascades_id = CascadesImage,
+                                     .cascades_rw_id = CascadesImage,
+                                     .cascades_id = CascadesTexture,
                                      .scene_rad_id = SceneRadianceTexture,
                                      .cascade_width = cascades_width_,
                                      .cascade_height = cascades_height_,
@@ -1076,8 +1092,9 @@ void Renderer2D::blit_pass(vk::CommandBuffer cmd)
   const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{swapchain_.extent().width, swapchain_.extent().height}};
   cmd.setScissor(0, 1, &scissor);
 
-  constexpr BlitPushConstant push_constant{
+  const BlitPushConstant push_constant{
       .composite_id = CompositeTexture,
+      .aces = config_.composite.aces,
   };
 
   cmd.pushConstants(blit_pipeline_layout_.get(), vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant),
@@ -1286,7 +1303,7 @@ void Renderer2D::create_cascade_image()
                               .set_extent(cascades_width_, cascades_height_)
                               .set_format(vk::Format::eR16G16B16A16Sfloat)
                               .set_layers(config_.cascades.cascades)
-                              .set_usage(vk::ImageUsageFlagBits::eStorage)
+                              .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
                               .set_debug_name("Cascade Images"));
   cascades_view_ =
       cascades_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
@@ -1307,6 +1324,8 @@ void Renderer2D::update_descriptor()
       .add_image(2, SceneColorTexture, vk::DescriptorType::eSampledImage, scene_color_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, SceneRadianceTexture, vk::DescriptorType::eSampledImage, scene_radiance_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, CascadesTexture, vk::DescriptorType::eSampledImage, cascades_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, LightTexture, vk::DescriptorType::eSampledImage, light_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
