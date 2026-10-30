@@ -46,7 +46,15 @@ void Application::run()
     Renderer2D::imgui_new_frame();
     auto* imgui_draw_data = user_interface_.render(renderer_);
 
-    // renderer_.draw_sprite({.texture = mario_texture, .pos = {512.0f, 812.0f}, .size = {10.0f, 10.0f}});
+    // const uint32_t wide = window_.width() / 40;
+    // const uint32_t high = window_.height() / 20;
+    // for (uint32_t i = 0; i < wide; i++) {
+    //   for (uint32_t j = 0; j < high; j++) {
+    //     renderer_.draw_sprite({.texture = mario_texture,
+    //                            .pos = {static_cast<float>(i * wide), static_cast<float>(j * high)},
+    //                            .size = {2.0f, 2.0f}});
+    //   }
+    // }
 
     renderer_.render({.window_size = {window_.width(), window_.height()},
                       .mouse_pos = {input_.mouse_x(), input_.mouse_y()},

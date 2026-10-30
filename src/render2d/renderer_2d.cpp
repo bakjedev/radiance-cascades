@@ -975,7 +975,7 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
                                      .scene_col_id = SceneColorTexture,
                                      .first = first};
 
-  const uint32_t gx = (cascades_width_ + 7) / 8;
+  const uint32_t gx = (cascades_width_ + 15) / 16;
   const uint32_t gy = (cascades_height_ + 7) / 8;
 
   for (uint32_t i = config_.cascades.cascades; i-- > 0;) {

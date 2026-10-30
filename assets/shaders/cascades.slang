@@ -26,37 +26,42 @@ struct PushConstant {
 [[vk::binding(3, 0)]] SamplerState samplers[];
 [[vk::binding(4, 0)]] ConstantBuffer<UBO> uniformBuffers[];
 
-static const int2 probe_offsets[] = {
-    int2(0, 0),
-    int2(1, 0),
-    int2(0, 1),
-    int2(1, 1)
-};
-
 float4 trace(float2 start, float2 end, UBO ubo, PushConstant pc) {
     float2 delta = end - start;
     float2 dir = normalize(delta);
     float len = length(delta);
 
+    bool hit = false;
+    float2 hit_point = 0.0;
+    int2 hit_coord = 0;
+
+    float2 scene_size = float2(ubo.scene_width, ubo.scene_height);
+
     float t = 0.0;
     for (int i = 0; i < 64; i++) {
         float2 point = start + dir * t;
-        int2 coord = int2(floor(point));
-        if (any(coord >= int2(ubo.scene_width, ubo.scene_height)) || any(coord < int2(0))) break;
+        if (any(point >= scene_size) || any(point < 0.0)) break;
+        int2 coord = int2(point);
         float distance = storageImagesF[pc.sdf_id].Load(coord).x;
         if (distance < EPSILON) {
-            float3 radiance = textures[pc.scene_rad_id].Load(int3(coord, 0)).xyz;
-            float4 result = float4(radiance, 0.0);
-            if (!pc.first) {
-                float3 color = textures[pc.scene_col_id].Load(int3(coord, 0)).xyz;
-                result.xyz += color * storageImagesF[pc.light_id].Load(int2(floor(point - dir * 1.5))).xyz;
-            }
-            return result;
+            hit = true;
+            hit_point = point;
+            hit_coord = coord;
+            break;
         }
         t += distance;
         if (t > len) break;
     }
-    return float4(float3(0.0), 1.0);
+
+    if (!hit) return float4(float3(0.0), 1.0);
+
+    float3 radiance = textures[pc.scene_rad_id].Load(int3(hit_coord, 0)).xyz;
+    float4 result = float4(radiance, 0.0);
+    if (!pc.first) {
+        float3 color = textures[pc.scene_col_id].Load(int3(hit_coord, 0)).xyz;
+        result.xyz += color * storageImagesF[pc.light_id].Load(int2(floor(hit_point - dir * 1.5))).xyz;
+    }
+    return result;
 }
 
 float4 get_weights(float2 ratio) {
@@ -93,7 +98,7 @@ uint part1by1(uint x) {
 uint interval_to_dir(uint2 t) { return part1by1(t.x) | (part1by1(t.y) << 1); }
 
 [shader("compute")]
-[numthreads(8, 8)]
+[numthreads(16, 8)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc) {
     int2 local = int2(dispatchThreadID.xy);
     if (any(local >= int2(pc.cascade_width, pc.cascade_height))) return;
@@ -134,7 +139,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
 
     float4 merged = float4(0.0);
     for (int i = 0; i < 4; i++) {
-        int2 index = base_index + probe_offsets[i];
+        int2 index = base_index + int2(i & 1, i >> 1);
         float2 pos = (float2(index) + 0.5) * neighbour_spacing;
 
         float2 end = pos + dir * neighbour_start_t;
