@@ -45,7 +45,7 @@ public:
     } cascades;
 
     struct CompositeConfig {
-      uint32_t blur_radius{120};
+      uint32_t blur_radius{60};
       float rim{50.0f};
       bool aces{true};
     } composite;
@@ -164,8 +164,10 @@ private:
   vk::UniquePipeline light_pipeline_;
 
   vk::UniquePipelineLayout blur_pipeline_layout_;
+  vk::UniquePipelineLayout blur_resolve_pipeline_layout_;
   vk::UniqueShaderModule blur_shader_module_;
   vk::UniquePipeline blur_pipeline_;
+  vk::UniquePipeline blur_resolve_pipeline_;
 
   vk::UniquePipelineLayout composite_pipeline_layout_;
   vk::UniqueShaderModule composite_shader_module_;
@@ -212,6 +214,8 @@ private:
 
   std::optional<Image> blur_image_;
   vk::UniqueImageView blur_view_;
+  vk::UniqueImageView blur_array_view_;
+  vk::UniqueImageView blur_resolve_view_;
   fwrk::ResourceID blur_id_;
 
   std::optional<Image> composite_image_;

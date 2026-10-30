@@ -128,13 +128,15 @@ public:
   [[nodiscard]] vk::UniqueImageView create_image_view(vk::Device device,
                                                       vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eNone,
                                                       const vk::ImageViewType view_type = vk::ImageViewType::e2D,
-                                                      const std::optional<uint32_t> mip_level = std::nullopt) const
+                                                      const std::optional<uint32_t> mip_level = std::nullopt,
+                                                      const std::optional<uint32_t> array_layer = std::nullopt) const
   {
     if (aspect == vk::ImageAspectFlagBits::eNone) {
       aspect = get_aspect_for_format(format_);
     }
 
-    const vk::ImageSubresourceRange range{aspect, mip_level.value_or(0), mip_level ? 1 : mip_levels_, 0, array_layers_};
+    const vk::ImageSubresourceRange range{aspect, mip_level.value_or(0), mip_level ? 1 : mip_levels_,
+                                          array_layer.value_or(0), array_layer ? 1 : array_layers_};
 
     return device.createImageViewUnique(
         vk::ImageViewCreateInfo{}.setImage(image_).setViewType(view_type).setFormat(format_).setSubresourceRange(

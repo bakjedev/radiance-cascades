@@ -67,13 +67,19 @@ namespace {
 
   struct BlurPushConstant {
     uint32_t light_id;
-    uint32_t light_rw_id;
     uint32_t blur_id;
     uint32_t blur_rw_id;
-    bool resolving;
+    uint32_t sampler_id;
+    uint32_t pass;
     uint32_t sample_count;
     uint32_t weights_id;
     uint32_t offsets_id;
+  };
+
+  struct BlurResolvePushConstant {
+    uint32_t light_rw_id;
+    uint32_t blur_id;
+    uint32_t sampler_id;
   };
 
   struct CompositePushConstant {
@@ -106,6 +112,7 @@ namespace {
     SceneRadianceTexture,
     LightTexture,
     BlurTexture,
+    BlurResolveTexture,
     CompositeTexture,
     CascadesTexture,
     SpriteTextures,
@@ -120,7 +127,7 @@ namespace {
 
   enum SamplerDescriptors {
     DefaultSampler = 0,
-    CascadesSampler,
+    LinearSampler,
   };
 } // namespace
 
@@ -237,7 +244,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
       .add_buffer(1, GaussianWeightsBuffer, vk::DescriptorType::eStorageBuffer, gaussian_weights_buffer_->buffer())
       .add_buffer(1, GaussianOffsetsBuffer, vk::DescriptorType::eStorageBuffer, gaussian_offsets_buffer_->buffer())
       .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
-      .add_image(3, CascadesSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
+      .add_image(3, LinearSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
                  cascades_sampler_.get())
       .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, ubo_->buffer())
       .update(device_.get(), bindless_descriptor_set_);
@@ -436,9 +443,10 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
                                     "Light Pipeline");
   }
 
-  // Blur pipeline
+  // Blur pipelines
   {
     vk::PushConstantRange blur_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurPushConstant)};
+    vk::PushConstantRange blur_resolve_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurResolvePushConstant)};
 
     const auto blur_shader = create_info.load_shader("blur.slang.spv");
     blur_shader_module_ = create_shader_module(device_.get(), blur_shader);
@@ -448,6 +456,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
 
     const ComputePipelineDesc blur_pipeline_desc{
         .module = blur_shader_module_.get(),
+        .entry = "blur",
         .layout = blur_pipeline_layout_.get(),
     };
 
@@ -455,6 +464,20 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(blur_pipeline_.get()),
                                     "Blur Pipeline");
+    // resolve
+    blur_resolve_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&blur_resolve_push, 1});
+
+    const ComputePipelineDesc blur_resolve_pipeline_desc{
+        .module = blur_shader_module_.get(),
+        .entry = "resolve",
+        .layout = blur_resolve_pipeline_layout_.get(),
+    };
+
+    blur_resolve_pipeline_ = create_compute_pipeline(device_.get(), blur_resolve_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(blur_resolve_pipeline_.get()),
+                                    "Blur Resolve Pipeline");
   }
 
   // Composite pipeline
@@ -1000,45 +1023,65 @@ void Renderer2D::blur_pass(vk::CommandBuffer cmd)
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, blur_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
 
-  auto barrier = vk::ImageMemoryBarrier2{}
-                     .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
-                     .setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
-                     .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
-                     .setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead)
-                     .setOldLayout(vk::ImageLayout::eGeneral)
-                     .setNewLayout(vk::ImageLayout::eGeneral)
-                     .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
-                     .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
-                     .setSubresourceRange(
-                         {vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers})
-                     .setImage(blur_image_->image());
+  auto barrier =
+      vk::ImageMemoryBarrier2{}
+          .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+          .setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
+          .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
+          .setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead | vk::AccessFlagBits2::eShaderStorageWrite)
+          .setOldLayout(vk::ImageLayout::eGeneral)
+          .setNewLayout(vk::ImageLayout::eGeneral)
+          .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
+          .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
+          .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, 1})
+          .setImage(blur_image_->image());
 
-  BlurPushConstant push_constant{.light_id = LightTexture,
-                                 .light_rw_id = LightImage,
-                                 .blur_id = BlurTexture,
-                                 .blur_rw_id = BlurImage,
-                                 .resolving = false,
-                                 .sample_count = static_cast<uint32_t>(gaussian_weights_.size()),
-                                 .weights_id = GaussianWeightsBuffer,
-                                 .offsets_id = GaussianOffsetsBuffer};
+  BlurPushConstant blur_push_constant{.light_id = LightTexture,
+                                      .blur_id = BlurTexture,
+                                      .blur_rw_id = BlurImage,
+                                      .sampler_id = LinearSampler,
+                                      .pass = 0,
+                                      .sample_count = static_cast<uint32_t>(gaussian_weights_.size()),
+                                      .weights_id = GaussianWeightsBuffer,
+                                      .offsets_id = GaussianOffsetsBuffer};
 
   cmd.pushConstants(blur_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurPushConstant),
-                    &push_constant);
+                    &blur_push_constant);
 
-  const uint32_t gx = (config_.scene_size.width + 7) / 8;
-  const uint32_t gy = (config_.scene_size.height + 7) / 8;
+  uint32_t gx = ((config_.scene_size.width >> 1) + 7) / 8;
+  uint32_t gy = ((config_.scene_size.height >> 1) + 7) / 8;
   cmd.dispatch(gx, gy, 1);
 
   cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+
+  blur_push_constant.pass = 1;
+  cmd.pushConstants(blur_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurPushConstant),
+                    &blur_push_constant);
+
+  cmd.dispatch(gx, gy, 1);
+
+  barrier.setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead);
+  barrier.subresourceRange.setBaseArrayLayer(1);
+  cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+
   barrier.setImage(light_image_->image());
+  barrier.subresourceRange.setBaseArrayLayer(0);
   barrier.setSrcAccessMask(vk::AccessFlagBits2::eShaderSampledRead);
   barrier.setDstAccessMask(vk::AccessFlagBits2::eShaderStorageWrite);
   cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
 
-  push_constant.resolving = true;
-  cmd.pushConstants(blur_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurPushConstant),
-                    &push_constant);
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, blur_resolve_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, blur_resolve_pipeline_layout_.get(), 0, 1,
+                         &bindless_descriptor_set_, 0, nullptr);
 
+  constexpr BlurResolvePushConstant resolve_push_constant{
+      .light_rw_id = LightImage, .blur_id = BlurResolveTexture, .sampler_id = LinearSampler};
+
+  cmd.pushConstants(blur_resolve_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                    sizeof(BlurResolvePushConstant), &resolve_push_constant);
+
+  gx = (config_.scene_size.width + 7) / 8;
+  gy = (config_.scene_size.height + 7) / 8;
   cmd.dispatch(gx, gy, 1);
 
   barrier.setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite);
@@ -1254,8 +1297,9 @@ void Renderer2D::create_images()
 
   blur_image_.emplace(device_.get_allocator(), device_.get(),
                       ImageDesc{}
-                          .set_extent(config_.scene_size.width, config_.scene_size.height)
+                          .set_extent(config_.scene_size.width >> 1, config_.scene_size.height >> 1)
                           .set_format(vk::Format::eR16G16B16A16Sfloat)
+                          .set_layers(2)
                           .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
                           .set_debug_name("Blur Image"));
 
@@ -1274,7 +1318,12 @@ void Renderer2D::create_images()
       jfa_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
   sdf_view_ = sdf_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
   light_view_ = light_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
-  blur_view_ = blur_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  blur_array_view_ =
+      blur_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
+  blur_view_ =
+      blur_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2D, {}, 0);
+  blur_resolve_view_ =
+      blur_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2D, {}, 1);
   composite_view_ = composite_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
 
   void* ubo_data;
@@ -1317,7 +1366,7 @@ void Renderer2D::update_descriptor()
       .add_image(0, SDFImage, vk::DescriptorType::eStorageImage, sdf_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, CascadesImage, vk::DescriptorType::eStorageImage, cascades_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, LightImage, vk::DescriptorType::eStorageImage, light_view_.get(), vk::ImageLayout::eGeneral)
-      .add_image(0, BlurImage, vk::DescriptorType::eStorageImage, blur_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(0, BlurImage, vk::DescriptorType::eStorageImage, blur_array_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(0, CompositeImage, vk::DescriptorType::eStorageImage, composite_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(2, DrawTexture, vk::DescriptorType::eSampledImage, draw_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
@@ -1330,6 +1379,8 @@ void Renderer2D::update_descriptor()
       .add_image(2, LightTexture, vk::DescriptorType::eSampledImage, light_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, BlurTexture, vk::DescriptorType::eSampledImage, blur_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, BlurResolveTexture, vk::DescriptorType::eSampledImage, blur_resolve_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, CompositeTexture, vk::DescriptorType::eSampledImage, composite_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal);
