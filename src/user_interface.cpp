@@ -1,7 +1,7 @@
 #include "user_interface.hpp"
 #include "imgui_impl_sdl3.h"
 #include "implot.h"
-#include "render2d/renderer_2d.hpp"
+#include "render/renderer_2d.hpp"
 
 UserInterface::UserInterface(SDL_Window* window)
 {

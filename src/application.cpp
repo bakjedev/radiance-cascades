@@ -15,8 +15,6 @@ Application::~Application() = default;
 void Application::run()
 {
   event_dispatcher_.listen<QuitEvent>([this](const QuitEvent&) { running = false; });
-  event_dispatcher_.listen<WindowResizeEvent>(
-      [this](const WindowResizeEvent& event) { renderer_.window_resize(event.width, event.height); });
 
   file_system_.add_route("assets", "../assets");
 

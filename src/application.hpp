@@ -2,7 +2,7 @@
 #include "event_dispatcher.hpp"
 #include "file_system.hpp"
 #include "input.hpp"
-#include "render2d/renderer_2d.hpp"
+#include "render/renderer_2d.hpp"
 #include "resource/resource_manager.hpp"
 #include "resource/types/image_resource.hpp"
 #include "resource/types/shader_resource.hpp"

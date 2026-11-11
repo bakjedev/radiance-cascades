@@ -1,12 +1,8 @@
 #pragma once
 #include "framework/context.hpp"
+#include "render_backend.hpp"
 #include "src/vulkan/buffer.hpp"
-#include "src/vulkan/device.hpp"
-#include "src/vulkan/frame.hpp"
 #include "src/vulkan/image.hpp"
-#include "src/vulkan/immediate_submit.hpp"
-#include "src/vulkan/instance.hpp"
-#include "src/vulkan/swapchain.hpp"
 
 struct ImDrawData;
 
@@ -20,7 +16,7 @@ public:
   };
 
   struct RenderInfo {
-    std::pair<int, int> window_size;
+    std::pair<uint32_t, uint32_t> window_size;
     std::pair<int, int> mouse_pos;
     ImDrawData* imgui_draw_data;
   };
@@ -74,8 +70,6 @@ public:
 
   void render(RenderInfo info);
 
-  void window_resize(int width, int height);
-
   Texture create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size);
 
   void plot();
@@ -90,7 +84,6 @@ public:
   const std::vector<Material>& materials() { return materials_; }
 
 private:
-  static constexpr uint32_t frames_in_flight = 2;
   static constexpr uint32_t max_sprites = 4096;
 
   struct SpriteGPU {
@@ -105,10 +98,6 @@ private:
     {
     }
   };
-
-  bool begin_frame();
-  void run_frame();
-  void end_frame();
 
   void compile();
 
@@ -125,15 +114,9 @@ private:
   void imgui_pass(vk::CommandBuffer cmd) const;
 
   Renderer2DConfig config_;
-  RenderInfo info_;
+  RenderInfo info_{};
 
-  Instance instance_;
-  Device device_;
-  Swapchain swapchain_;
-  std::array<Frame, frames_in_flight> frames_;
-  std::vector<vk::UniqueSemaphore> submit_semaphores_;
-  fwrk::Context context_;
-  ImmediateSubmit immediate_;
+  RenderBackend backend_;
 
   vk::UniquePipelineLayout draw_pipeline_layout_;
   vk::UniqueShaderModule draw_shader_module_;
@@ -177,11 +160,6 @@ private:
   vk::UniqueShaderModule blit_shader_module_;
   vk::UniquePipeline blit_pipeline_;
 
-  vk::UniqueDescriptorPool descriptor_pool_;
-  vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;
-  vk::DescriptorSet bindless_descriptor_set_;
-
-  vk::UniqueSampler sampler_;
   vk::UniqueSampler cascades_sampler_;
 
   std::optional<Image> draw_image_;
@@ -228,15 +206,7 @@ private:
   std::optional<Buffer> ubo_;
   std::optional<Buffer> gaussian_weights_buffer_;
   std::optional<Buffer> gaussian_offsets_buffer_;
-  std::array<std::optional<Buffer>, frames_in_flight> sprites_buffers_;
-
-  std::vector<fwrk::ResourceID> swapchain_imports_;
-  fwrk::ResourceID swapchain_proxy_;
-
-  uint32_t current_frame_{};
-  uint32_t image_index_{};
-
-  bool should_compile_ = true;
+  std::array<std::optional<Buffer>, RenderBackend::frames_in_flight> sprites_buffers_;
 
   std::vector<Material> materials_;
   bool should_draw_ = false;
@@ -255,7 +225,6 @@ private:
   std::vector<float> gaussian_weights_;
   std::vector<float> gaussian_offsets_;
 
-  void import_swapchain_images();
   void import_images();
 
   void create_images();
@@ -263,11 +232,9 @@ private:
 
   void update_descriptor();
 
-  void upload_sprites() const;
+  void upload_sprites();
 
   void calculate_gaussian(uint32_t radius, float k);
 
   [[nodiscard]] std::pair<int32_t, int32_t> screen_to_pos(const std::pair<int32_t, int32_t>& screen) const;
-
-  [[nodiscard]] fwrk::Context create_fwrk_context() const;
 };
