@@ -31,7 +31,6 @@ void Application::run()
     //   renderer_.plot({input_.mouse_x(), input_.mouse_y()});
     // }
 
-    Renderer2D::imgui_new_frame();
     auto* imgui_draw_data = user_interface_.render(renderer_);
 
     renderer_.render({.window_size = {window_.width(), window_.height()}, .imgui_draw_data = imgui_draw_data});

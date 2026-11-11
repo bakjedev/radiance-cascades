@@ -2,6 +2,8 @@
 
 Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : backend_(create_info) {}
 
+Renderer3D::~Renderer3D() { backend_.device().get().waitIdle(); }
+
 void Renderer3D::render([[maybe_unused]] RenderInfo info) {}
 
 void Renderer3D::imgui_new_frame() { RenderBackend::imgui_new_frame(); }

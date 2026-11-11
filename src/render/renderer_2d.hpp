@@ -54,6 +54,7 @@ public:
   };
 
   explicit Renderer2D(const RendererCreateInfo& create_info);
+  ~Renderer2D();
 
   void render(RenderInfo info);
 

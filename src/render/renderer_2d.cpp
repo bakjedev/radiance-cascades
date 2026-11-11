@@ -468,6 +468,8 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
   }
 }
 
+Renderer2D::~Renderer2D() { backend_.device().get().waitIdle(); }
+
 void Renderer2D::render(RenderInfo info)
 {
   info_ = std::move(info);

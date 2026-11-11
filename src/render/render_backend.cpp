@@ -91,11 +91,7 @@ RenderBackend::RenderBackend(const RendererCreateInfo& create_info) :
   swapchain_proxy_ = context_.create_proxy();
 }
 
-RenderBackend::~RenderBackend()
-{
-  device_.get().waitIdle();
-  ImGui_ImplVulkan_Shutdown();
-}
+RenderBackend::~RenderBackend() { ImGui_ImplVulkan_Shutdown(); }
 
 bool RenderBackend::begin_frame(const vk::Extent2D extent)
 {

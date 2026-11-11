@@ -5,6 +5,7 @@
 class Renderer3D {
 public:
   explicit Renderer3D(const RendererCreateInfo& create_info);
+  ~Renderer3D();
   void render(RenderInfo info);
   static void imgui_new_frame();
   void request_recompile();
