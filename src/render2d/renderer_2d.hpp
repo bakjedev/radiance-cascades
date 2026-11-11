@@ -228,6 +228,7 @@ private:
   std::optional<Buffer> ubo_;
   std::optional<Buffer> gaussian_weights_buffer_;
   std::optional<Buffer> gaussian_offsets_buffer_;
+  std::array<std::optional<Buffer>, frames_in_flight> sprites_buffers_;
 
   std::vector<fwrk::ResourceID> swapchain_imports_;
   fwrk::ResourceID swapchain_proxy_;

@@ -1,6 +1,5 @@
 #pragma once
 #include <vulkan/vulkan.hpp>
-#include "buffer.hpp"
 
 class Device;
 
@@ -9,8 +8,6 @@ struct Frame {
   vk::UniqueCommandBuffer command_buffer;
   vk::UniqueSemaphore image_available;
   vk::UniqueFence in_flight;
-
-  std::optional<Buffer> sprites_buffer;
 };
 
-void create_frame(Frame& frame, const Device& device, vk::DeviceSize sprites_buffer_size);
+void create_frame(Frame& frame, const Device& device);

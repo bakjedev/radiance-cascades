@@ -124,16 +124,21 @@ private:
   {
     if (buffer_) vmaDestroyBuffer(allocator_, buffer_, allocation_);
     allocator_ = nullptr;
+    device_ = nullptr;
     buffer_ = nullptr;
     allocation_ = nullptr;
+    size_ = 0;
+    mapped_ = nullptr;
   }
 
   void swap(Buffer& other) noexcept
   {
     std::swap(allocator_, other.allocator_);
+    std::swap(device_, other.device_);
     std::swap(buffer_, other.buffer_);
     std::swap(allocation_, other.allocation_);
     std::swap(size_, other.size_);
+    std::swap(mapped_, other.mapped_);
   }
 
   VmaAllocator allocator_ = nullptr;

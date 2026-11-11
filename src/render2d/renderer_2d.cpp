@@ -137,7 +137,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
     context_(create_fwrk_context()), immediate_(device_)
 {
   for (Frame& frame: frames_) {
-    create_frame(frame, device_, sizeof(SpriteGPU) * max_sprites);
+    create_frame(frame, device_);
   }
 
   submit_semaphores_.resize(swapchain_.image_count());
@@ -191,6 +191,17 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
           .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
           .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
           .set_debug_name("Gaussian Offsets"));
+
+
+  for (uint32_t i = 0; i < frames_in_flight; i++) {
+    sprites_buffers_.at(i).emplace(device_.get_allocator(), device_.get(),
+                                   BufferDesc{}
+                                       .set_size(sizeof(SpriteGPU) * max_sprites)
+                                       .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
+                                       .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                                           VMA_ALLOCATION_CREATE_MAPPED_BIT)
+                                       .set_debug_name(std::format("Sprites buffer {}", i)));
+  }
 
   // ----------------------------------------
   // Sampler
@@ -1395,13 +1406,14 @@ void Renderer2D::update_descriptor()
 
 void Renderer2D::upload_sprites() const
 {
-  const Frame& frame = frames_.at(current_frame_);
+  if (!sprites_buffers_.at(current_frame_)) return;
+  const Buffer& buffer = *sprites_buffers_.at(current_frame_);
 
-  std::memcpy(frame.sprites_buffer->get_mapped_data(), sprites_.data(), sprites_.size() * sizeof(SpriteGPU));
-  frame.sprites_buffer->flush_allocation(0, sprites_.size() * sizeof(SpriteGPU));
+  std::memcpy(buffer.get_mapped_data(), sprites_.data(), sprites_.size() * sizeof(SpriteGPU));
+  buffer.flush_allocation(0, sprites_.size() * sizeof(SpriteGPU));
 
   DescriptorWriter{}
-      .add_buffer(1, SpriteBuffer, vk::DescriptorType::eStorageBuffer, frame.sprites_buffer->buffer())
+      .add_buffer(1, SpriteBuffer, vk::DescriptorType::eStorageBuffer, buffer.buffer())
       .update(device_.get(), bindless_descriptor_set_);
 }
 
