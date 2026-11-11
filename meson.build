@@ -41,6 +41,7 @@ sources = files(
     'src/resource/types/image_resource.cpp',
     'src/render/render_backend.cpp',
     'src/render/renderer_2d.cpp',
+    'src/render/renderer_3d.cpp',
     'src/vulkan/instance.cpp',
     'src/vulkan/device.cpp',
     'src/vulkan/swapchain.cpp',

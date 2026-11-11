@@ -1,25 +1,18 @@
 #pragma once
 #include "framework/context.hpp"
+#include "renderer.hpp"
 #include "src/vulkan/device.hpp"
 #include "src/vulkan/frame.hpp"
 #include "src/vulkan/immediate_submit.hpp"
 #include "src/vulkan/instance.hpp"
 #include "src/vulkan/swapchain.hpp"
 
-struct ImDrawData;
-
-struct BackendCreateInfo {
-  std::span<const char* const> instance_extensions;
-  std::function<VkSurfaceKHR(VkInstance)> create_surface;
-  VkExtent2D initial_extent;
-  std::function<std::vector<std::byte>(const std::string&)> load_shader;
-};
-
 class RenderBackend {
 public:
   static constexpr uint32_t frames_in_flight = 2;
 
-  explicit RenderBackend(const BackendCreateInfo& create_info);
+  explicit RenderBackend(const RendererCreateInfo& create_info);
+  ~RenderBackend();
   bool begin_frame(vk::Extent2D extent);
   void execute_frame();
   void end_frame();

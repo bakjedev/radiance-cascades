@@ -18,25 +18,23 @@ UserInterface::~UserInterface()
   ImGui::DestroyContext();
 }
 
-ImDrawData* UserInterface::render(Renderer2D& renderer)
-{
-  ImGui_ImplSDL3_NewFrame();
-
-  ImGui::NewFrame();
-
-  config_panel(renderer);
-  performance_panel(renderer);
-
-  ImGui::Render();
-
-  return ImGui::GetDrawData();
-}
-
 void UserInterface::process_event(const SDL_Event& sdl_event) { ImGui_ImplSDL3_ProcessEvent(&sdl_event); }
 
 bool UserInterface::consuming() { return ImGui::GetIO().WantCaptureMouse; }
 
-void UserInterface::config_panel(Renderer2D& renderer)
+void UserInterface::begin_frame()
+{
+  ImGui_ImplSDL3_NewFrame();
+  ImGui::NewFrame();
+}
+
+ImDrawData* UserInterface::end_frame()
+{
+  ImGui::Render();
+  return ImGui::GetDrawData();
+}
+
+void UserInterface::renderer_2d_panel(Renderer2D& renderer)
 {
   auto& cfg = renderer.config();
   ImGui::Begin("Config");
@@ -104,10 +102,11 @@ void UserInterface::config_panel(Renderer2D& renderer)
   ImGui::End();
 }
 
-void UserInterface::performance_panel(Renderer2D& renderer)
+void UserInterface::renderer_3d_panel([[maybe_unused]] Renderer3D& renderer) {}
+
+void UserInterface::performance_panel(const fwrk::Graph::FrameTimings& timings)
 {
   auto ns_to_ms = [](const uint64_t ns) { return static_cast<float>(ns) / 1000000.0f; };
-  const fwrk::Graph::FrameTimings timings = renderer.get_timings();
 
   for (auto& [_, times]: perf_passes_) times[perf_head_] = 0.0f;
   for (const auto& pass_timing: timings.passes) {

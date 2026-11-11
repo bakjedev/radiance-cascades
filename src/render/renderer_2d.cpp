@@ -131,11 +131,7 @@ namespace {
   };
 } // namespace
 
-Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
-    backend_({.instance_extensions = create_info.instance_extensions,
-              .create_surface = create_info.create_surface,
-              .initial_extent = create_info.initial_extent,
-              .load_shader = create_info.load_shader})
+Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_info)
 {
   // ----------------------------------------
   // Buffers
@@ -472,12 +468,6 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) :
   }
 }
 
-Renderer2D::~Renderer2D()
-{
-  backend_.device().get().waitIdle();
-  ImGui_ImplVulkan_Shutdown();
-}
-
 void Renderer2D::render(RenderInfo info)
 {
   info_ = std::move(info);
@@ -568,7 +558,11 @@ Renderer2D::Texture Renderer2D::create_texture(const std::span<const uint8_t> da
   return Texture{static_cast<uint32_t>(texture_images_.size() - 1)};
 }
 
-void Renderer2D::plot() { should_draw_ = true; }
+void Renderer2D::plot(const std::pair<int, int>& pos)
+{
+  draw_pos_ = pos;
+  should_draw_ = true;
+}
 
 void Renderer2D::draw_sprite(Sprite sprite) { sprites_.emplace_back(sprite); }
 
@@ -684,7 +678,7 @@ void Renderer2D::draw_pass(vk::CommandBuffer cmd)
                          0, nullptr);
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
-  const auto [draw_x, draw_y] = screen_to_pos(info_.mouse_pos);
+  const auto [draw_x, draw_y] = screen_to_pos(draw_pos_);
   const DrawPushConstant push_constant{.draw_id = DrawImage,
                                        .s = config_.drawing.size,
                                        .x = draw_x,

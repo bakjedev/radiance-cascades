@@ -18,45 +18,23 @@ void Application::run()
 
   file_system_.add_route("assets", "../assets");
 
-  // Renderer2D::Texture mario_texture{};
-  // {
-  //   auto mario_image_resource =
-  //       resource_manager_.create_from_file<ImageResource>("mario.png", ImageResourceLoader{&file_system_});
-  //   mario_texture = renderer_.create_texture(mario_image_resource->pixels, mario_image_resource->size);
-  // }
-
   while (running) {
     input_.begin_frame();
     poll_events();
     input_.end_frame();
 
-    if (input_.key_pressed(KeyboardKey::Space)) {
-      std::cout << "Jump!\n";
-    }
     if (input_.key_down(KeyboardKey::Escape)) {
       running = false;
     }
 
-    if (input_.mouse_down(MouseButton::Left) && !UserInterface::consuming()) {
-      renderer_.plot();
-    }
+    // if (input_.mouse_down(MouseButton::Left) && !UserInterface::consuming()) {
+    //   renderer_.plot({input_.mouse_x(), input_.mouse_y()});
+    // }
 
     Renderer2D::imgui_new_frame();
     auto* imgui_draw_data = user_interface_.render(renderer_);
 
-    // const uint32_t wide = window_.width() / 40;
-    // const uint32_t high = window_.height() / 20;
-    // for (uint32_t i = 0; i < wide; i++) {
-    //   for (uint32_t j = 0; j < high; j++) {
-    //     renderer_.draw_sprite({.texture = mario_texture,
-    //                            .pos = {static_cast<float>(i * wide), static_cast<float>(j * high)},
-    //                            .size = {2.0f, 2.0f}});
-    //   }
-    // }
-
-    renderer_.render({.window_size = {window_.width(), window_.height()},
-                      .mouse_pos = {input_.mouse_x(), input_.mouse_y()},
-                      .imgui_draw_data = imgui_draw_data});
+    renderer_.render({.window_size = {window_.width(), window_.height()}, .imgui_draw_data = imgui_draw_data});
   }
 }
 
@@ -97,12 +75,12 @@ void Application::poll_events()
   }
 }
 
-Renderer2D Application::create_renderer()
+CurrentRenderer Application::create_renderer()
 {
   uint32_t sdl_instance_extension_count = 0;
   const auto* const sdl_instance_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_instance_extension_count);
 
-  return Renderer2D(Renderer2D::RendererCreateInfo{
+  return CurrentRenderer(RendererCreateInfo{
       .instance_extensions = {sdl_instance_extensions, sdl_instance_extension_count},
       .create_surface =
           [this](VkInstance instance) {

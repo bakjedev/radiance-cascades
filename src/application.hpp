@@ -2,7 +2,7 @@
 #include "event_dispatcher.hpp"
 #include "file_system.hpp"
 #include "input.hpp"
-#include "render/renderer_2d.hpp"
+#include "render/current_renderer.hpp"
 #include "resource/resource_manager.hpp"
 #include "resource/types/image_resource.hpp"
 #include "resource/types/shader_resource.hpp"
@@ -26,10 +26,10 @@ private:
   FileSystem file_system_;
   ResourceManager<ShaderResource, ImageResource> resource_manager_;
   UserInterface user_interface_;
-  Renderer2D renderer_;
+  CurrentRenderer renderer_;
   bool running = true;
 
   void poll_events();
 
-  Renderer2D create_renderer();
+  CurrentRenderer create_renderer();
 };

@@ -1,6 +1,7 @@
 #pragma once
 #include "framework/context.hpp"
 #include "render_backend.hpp"
+#include "renderer.hpp"
 #include "src/vulkan/buffer.hpp"
 #include "src/vulkan/image.hpp"
 
@@ -8,19 +9,6 @@ struct ImDrawData;
 
 class Renderer2D {
 public:
-  struct RendererCreateInfo {
-    std::span<const char* const> instance_extensions;
-    std::function<VkSurfaceKHR(VkInstance)> create_surface;
-    VkExtent2D initial_extent;
-    std::function<std::vector<std::byte>(const std::string&)> load_shader;
-  };
-
-  struct RenderInfo {
-    std::pair<uint32_t, uint32_t> window_size;
-    std::pair<int, int> mouse_pos;
-    ImDrawData* imgui_draw_data;
-  };
-
   struct Renderer2DConfig {
     struct DrawConfig {
       uint32_t size{50};
@@ -66,13 +54,12 @@ public:
   };
 
   explicit Renderer2D(const RendererCreateInfo& create_info);
-  ~Renderer2D();
 
   void render(RenderInfo info);
 
   Texture create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size);
 
-  void plot();
+  void plot(const std::pair<int, int>& pos);
   void draw_sprite(Sprite sprite);
 
   static void imgui_new_frame();
@@ -211,6 +198,7 @@ private:
   std::vector<Material> materials_;
   bool should_draw_ = false;
   bool did_draw_ = false;
+  std::pair<int, int> draw_pos_;
 
   std::vector<SpriteGPU> sprites_;
   void* sprites_mapped = nullptr;

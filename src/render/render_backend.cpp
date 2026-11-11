@@ -3,7 +3,7 @@
 #include "imgui_impl_vulkan.h"
 #include "src/vulkan/descriptor.hpp"
 
-RenderBackend::RenderBackend(const BackendCreateInfo& create_info) :
+RenderBackend::RenderBackend(const RendererCreateInfo& create_info) :
     instance_(create_info.instance_extensions), device_(instance_.get(), create_info.create_surface(instance_.get())),
     swapchain_(device_, create_info.initial_extent, vk::ImageUsageFlagBits::eColorAttachment),
     context_(create_fwrk_context()), immediate_(device_)
@@ -89,6 +89,12 @@ RenderBackend::RenderBackend(const BackendCreateInfo& create_info) :
   // ----------------------------------------
   import_swapchain_images();
   swapchain_proxy_ = context_.create_proxy();
+}
+
+RenderBackend::~RenderBackend()
+{
+  device_.get().waitIdle();
+  ImGui_ImplVulkan_Shutdown();
 }
 
 bool RenderBackend::begin_frame(const vk::Extent2D extent)
