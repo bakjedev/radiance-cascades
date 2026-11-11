@@ -1,8 +1,8 @@
 #include "renderer_2d.hpp"
 #include <cmath>
-#include "backend/descriptor.hpp"
-#include "backend/pipeline.hpp"
 #include "imgui_impl_vulkan.h"
+#include "src/vulkan/descriptor.hpp"
+#include "src/vulkan/pipeline.hpp"
 
 namespace {
   struct DrawPushConstant {

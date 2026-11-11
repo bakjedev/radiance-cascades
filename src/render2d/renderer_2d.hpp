@@ -1,12 +1,12 @@
 #pragma once
-#include "backend/buffer.hpp"
-#include "backend/device.hpp"
-#include "backend/frame.hpp"
-#include "backend/image.hpp"
-#include "backend/immediate_submit.hpp"
-#include "backend/instance.hpp"
-#include "backend/swapchain.hpp"
 #include "framework/context.hpp"
+#include "src/vulkan/buffer.hpp"
+#include "src/vulkan/device.hpp"
+#include "src/vulkan/frame.hpp"
+#include "src/vulkan/image.hpp"
+#include "src/vulkan/immediate_submit.hpp"
+#include "src/vulkan/instance.hpp"
+#include "src/vulkan/swapchain.hpp"
 
 struct ImDrawData;
 

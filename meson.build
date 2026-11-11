@@ -40,10 +40,10 @@ sources = files(
     'src/resource/types/shader_resource.cpp',
     'src/resource/types/image_resource.cpp',
     'src/render2d/renderer_2d.cpp',
-    'src/render2d/backend/instance.cpp',
-    'src/render2d/backend/device.cpp',
-    'src/render2d/backend/swapchain.cpp',
-    'src/render2d/backend/frame.cpp',
+    'src/vulkan/instance.cpp',
+    'src/vulkan/device.cpp',
+    'src/vulkan/swapchain.cpp',
+    'src/vulkan/frame.cpp',
     'src/user_interface.cpp',
 )
 
