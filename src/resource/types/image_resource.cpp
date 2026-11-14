@@ -23,8 +23,19 @@ ImageResource ImageResourceLoader::operator()(const std::string& path) const
   return res;
 }
 
-ImageResource ImageResourceLoader::operator()(std::vector<uint8_t>& pixels,
-                                              const std::pair<uint32_t, uint32_t>& size) const
+ImageResource ImageResourceLoader::operator()(const std::vector<std::byte>& image_data) const
 {
-  return ImageResource{.gpu_image = renderer->create_texture(pixels, size), .size = size};
+  int width, height, channels;
+  stbi_uc* data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(image_data.data()),
+                                        static_cast<int>(image_data.size()), &width, &height, &channels, 4);
+
+
+  const std::pair size = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+  ImageResource res{
+      .gpu_image = renderer->create_texture(std::vector(data, data + static_cast<size_t>(width * height * 4)), size),
+      .size = size};
+
+  stbi_image_free(data);
+
+  return res;
 }

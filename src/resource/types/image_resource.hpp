@@ -6,6 +6,7 @@
 #include "src/render/renderer_types.hpp"
 
 class FileSystem;
+class RenderBackend;
 
 struct ImageResource {
   GPUImage gpu_image;
@@ -15,8 +16,8 @@ struct ImageResource {
 
 struct ImageResourceLoader {
   ImageResource operator()(const std::string& path) const;
-  ImageResource operator()(std::vector<uint8_t>& pixels, const std::pair<uint32_t, uint32_t>& size) const;
+  ImageResource operator()(const std::vector<std::byte>& image_data) const;
 
   FileSystem* file_system;
-  ActiveRenderer* renderer;
+  RenderBackend* renderer;
 };

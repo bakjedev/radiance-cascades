@@ -20,7 +20,7 @@ struct GLTFResource {
 
   struct Primitive {
     GeometryRange range;
-    uint32_t material;
+    GPUMaterial material;
   };
 
   struct Mesh {
@@ -53,7 +53,7 @@ struct GLTFResource {
   std::vector<Camera> cameras;
   std::vector<ResourceHandle<ImageResource>> images;
   std::vector<GPUSampler> samplers;
-  std::vector<std::pair<uint32_t, uint32_t>> textures;
+  std::vector<std::pair<GPUImage, GPUSampler>> textures;
   std::vector<GPUMaterial> materials;
 };
 
@@ -63,5 +63,5 @@ struct GLTFResourceLoader {
 
   FileSystem* file_system;
   ResourceManager* resource_manager;
-  ActiveRenderer* renderer;
+  Renderer3D* renderer;
 };

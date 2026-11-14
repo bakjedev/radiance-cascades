@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include <glm/glm.hpp>
 #include <vulkan/vulkan.hpp>
 
 struct ImDrawData;
@@ -27,4 +28,31 @@ struct GeometryRange {
   uint32_t first_index;
   uint32_t index_count;
   int32_t vertex_offset;
+};
+
+enum class Filter : uint8_t {
+  Nearest = 0,
+  Linear,
+  NearestMipMapNearest,
+  LinearMipMapNearest,
+  NearestMipMapLinear,
+  LinearMipMapLinear,
+};
+
+enum class Wrap : uint8_t {
+  ClampToEdge = 0,
+  MirroredRepeat,
+  Repeat,
+};
+
+struct MaterialInfo {
+  glm::vec4 base_color;
+  glm::vec3 emissive_color;
+  float metallic, roughness, normal_scale, occlusion_scale;
+  struct Textures {
+    struct Texture {
+      uint32_t index;
+      uint32_t tex_coord;
+    } albedo, metal_roughness, normal, occlusion, emissive;
+  } textures;
 };

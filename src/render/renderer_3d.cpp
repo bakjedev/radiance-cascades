@@ -19,6 +19,25 @@ void Renderer3D::render([[maybe_unused]] RenderInfo info)
   end_frame();
 }
 
+GPUSampler Renderer3D::create_sampler([[maybe_unused]] Filter min_filter, [[maybe_unused]] Filter mag_filter,
+                                      [[maybe_unused]] Wrap wrap_s, [[maybe_unused]] Wrap wrap_t)
+{
+  const auto id = static_cast<uint32_t>(samplers_.size());
+  samplers_.emplace_back();
+  return {id};
+}
+
+GPUMaterial Renderer3D::create_material(const MaterialInfo& material)
+{
+  const auto id = static_cast<uint32_t>(materials_.size());
+  materials_.emplace_back(material.base_color, material.emissive_color, material.metallic, material.roughness,
+                          material.normal_scale, material.occlusion_scale, pack_texture_index(material.textures.albedo),
+                          pack_texture_index(material.textures.metal_roughness),
+                          pack_texture_index(material.textures.normal), pack_texture_index(material.textures.occlusion),
+                          pack_texture_index(material.textures.emissive));
+  return {id};
+}
+
 void Renderer3D::compile()
 {
   fwrk::Graph& graph = context_.graph();
@@ -40,4 +59,10 @@ void Renderer3D::compile()
 void Renderer3D::imgui_pass(vk::CommandBuffer cmd) const
 {
   ImGui_ImplVulkan_RenderDrawData(info_.imgui_draw_data, cmd);
+}
+
+uint32_t Renderer3D::pack_texture_index(const MaterialInfo::Textures::Texture& texture)
+{
+  assert((texture.index < MaterialTextureMask || texture.index == UINT32_MAX) && texture.tex_coord < 256);
+  return pack_material_texture(texture.index == UINT32_MAX ? MaterialTextureMask : texture.index, texture.tex_coord);
 }
