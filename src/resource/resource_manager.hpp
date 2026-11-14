@@ -6,7 +6,7 @@
 #include "resource.hpp"
 
 template<typename... Ts>
-class ResourceManager {
+class ResourceManagerClass {
 public:
   template<typename T>
   ResourceStorage<T>& get_storage()
@@ -35,3 +35,5 @@ public:
 private:
   std::tuple<ResourceStorage<Ts>...> storages_;
 };
+
+using ResourceManager = ResourceManagerClass<struct ShaderResource, struct ImageResource, struct GLTFResource>;

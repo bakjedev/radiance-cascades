@@ -131,12 +131,12 @@ namespace {
   };
 } // namespace
 
-Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_info)
+Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(create_info)
 {
   // ----------------------------------------
   // Buffers
   // ----------------------------------------
-  material_buffer_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  material_buffer_.emplace(device_.get_allocator(), device_.get(),
                            BufferDesc{.alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}
                                .set_size(sizeof(Material) * 256)
                                .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
@@ -151,12 +151,12 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
   materials_.push_back(Material{.color = {0.31f, 0.48f, 0.88f}, .radiance = {0.31f, 0.48f, 0.88f}});
 
   void* material_data;
-  vmaMapMemory(backend_.device().get_allocator(), material_buffer_->allocation(), &material_data);
+  vmaMapMemory(device_.get_allocator(), material_buffer_->allocation(), &material_data);
   memcpy(material_data, materials_.data(), sizeof(Material) * materials_.size());
-  vmaUnmapMemory(backend_.device().get_allocator(), material_buffer_->allocation());
+  vmaUnmapMemory(device_.get_allocator(), material_buffer_->allocation());
 
 
-  ubo_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  ubo_.emplace(device_.get_allocator(), device_.get(),
                BufferDesc{}
                    .set_size(sizeof(UBOData))
                    .set_usage(vk::BufferUsageFlagBits::eUniformBuffer)
@@ -164,7 +164,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
                    .set_debug_name("UBO"));
 
   gaussian_weights_buffer_.emplace(
-      backend_.device().get_allocator(), backend_.device().get(),
+      device_.get_allocator(), device_.get(),
       BufferDesc{}
           .set_size(512 * sizeof(float))
           .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
@@ -172,7 +172,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
           .set_debug_name("Gaussian Weights"));
 
   gaussian_offsets_buffer_.emplace(
-      backend_.device().get_allocator(), backend_.device().get(),
+      device_.get_allocator(), device_.get(),
       BufferDesc{}
           .set_size(512 * sizeof(float))
           .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
@@ -181,7 +181,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
 
 
   for (uint32_t i = 0; i < RenderBackend::frames_in_flight; i++) {
-    sprites_buffers_.at(i).emplace(backend_.device().get_allocator(), backend_.device().get(),
+    sprites_buffers_.at(i).emplace(device_.get_allocator(), device_.get(),
                                    BufferDesc{}
                                        .set_size(sizeof(SpriteGPU) * max_sprites)
                                        .set_usage(vk::BufferUsageFlagBits::eStorageBuffer)
@@ -198,18 +198,17 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
   sampler_info.setAddressModeV(vk::SamplerAddressMode::eClampToBorder);
   sampler_info.setMinFilter(vk::Filter::eLinear);
   sampler_info.setMagFilter(vk::Filter::eLinear);
-  cascades_sampler_ = backend_.device().get().createSamplerUnique(sampler_info);
+  cascades_sampler_ = device_.get().createSamplerUnique(sampler_info);
 
   DescriptorWriter{}
       .add_buffer(1, MaterialBuffer, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
       .add_buffer(1, GaussianWeightsBuffer, vk::DescriptorType::eStorageBuffer, gaussian_weights_buffer_->buffer())
       .add_buffer(1, GaussianOffsetsBuffer, vk::DescriptorType::eStorageBuffer, gaussian_offsets_buffer_->buffer())
-      .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
-                 backend_.sampler())
+      .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .add_image(3, LinearSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
                  cascades_sampler_.get())
       .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, ubo_->buffer())
-      .update(backend_.device().get(), backend_.bindless_set());
+      .update(device_.get(), bindless_descriptor_set_);
 
   // ----------------------------------------
   // Pipelines
@@ -227,15 +226,15 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant)};
 
     const auto draw_shader = create_info.load_shader("draw.slang.spv");
-    draw_shader_module_ = create_shader_module(backend_.device().get(), draw_shader);
+    draw_shader_module_ = create_shader_module(device_.get(), draw_shader);
 
     draw_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&draw_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&draw_push, 1});
 
     const ComputePipelineDesc draw_pipeline_desc{.module = draw_shader_module_.get(),
                                                  .layout = draw_pipeline_layout_.get()};
 
-    draw_pipeline_ = create_compute_pipeline(backend_.device().get(), draw_pipeline_desc);
+    draw_pipeline_ = create_compute_pipeline(device_.get(), draw_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(draw_pipeline_.get()),
                                     "Draw Pipeline");
@@ -246,10 +245,10 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange convert_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(ConvertPushConstant)};
 
     const auto convert_shader = create_info.load_shader("convert.slang.spv");
-    convert_shader_module_ = create_shader_module(backend_.device().get(), convert_shader);
+    convert_shader_module_ = create_shader_module(device_.get(), convert_shader);
 
     convert_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&convert_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&convert_push, 1});
 
     GraphicsPipelineDesc convert_pipeline_desc{};
     convert_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, convert_shader_module_.get(),
@@ -266,7 +265,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
 
     convert_pipeline_desc.layout = convert_pipeline_layout_.get();
 
-    convert_pipeline_ = create_graphics_pipeline(backend_.device().get(), convert_pipeline_desc);
+    convert_pipeline_ = create_graphics_pipeline(device_.get(), convert_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(convert_pipeline_.get()),
                                     "Convert Pipeline");
@@ -277,10 +276,10 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange sprite_push{vk::ShaderStageFlagBits::eVertex, 0, sizeof(SpritePushConstant)};
 
     const auto sprite_shader = create_info.load_shader("sprite.slang.spv");
-    sprite_shader_module_ = create_shader_module(backend_.device().get(), sprite_shader);
+    sprite_shader_module_ = create_shader_module(device_.get(), sprite_shader);
 
     sprite_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&sprite_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&sprite_push, 1});
 
     GraphicsPipelineDesc sprite_pipeline_desc{};
     sprite_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, sprite_shader_module_.get(), "vs_main");
@@ -298,7 +297,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
 
     sprite_pipeline_desc.layout = sprite_pipeline_layout_.get();
 
-    sprite_pipeline_ = create_graphics_pipeline(backend_.device().get(), sprite_pipeline_desc);
+    sprite_pipeline_ = create_graphics_pipeline(device_.get(), sprite_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(sprite_pipeline_.get()),
                                     "Sprite Pipeline");
@@ -309,15 +308,15 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange jfa_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant)};
 
     const auto jfa_shader = create_info.load_shader("jfa.slang.spv");
-    jfa_shader_module_ = create_shader_module(backend_.device().get(), jfa_shader);
+    jfa_shader_module_ = create_shader_module(device_.get(), jfa_shader);
 
     jfa_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&jfa_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&jfa_push, 1});
 
     const ComputePipelineDesc jfa_pipeline_desc{.module = jfa_shader_module_.get(),
                                                 .layout = jfa_pipeline_layout_.get()};
 
-    jfa_pipeline_ = create_compute_pipeline(backend_.device().get(), jfa_pipeline_desc);
+    jfa_pipeline_ = create_compute_pipeline(device_.get(), jfa_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(jfa_pipeline_.get()), "JFA Pipeline");
   }
@@ -327,15 +326,15 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange sdf_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant)};
 
     const auto sdf_shader = create_info.load_shader("sdf.slang.spv");
-    sdf_shader_module_ = create_shader_module(backend_.device().get(), sdf_shader);
+    sdf_shader_module_ = create_shader_module(device_.get(), sdf_shader);
 
     sdf_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&sdf_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&sdf_push, 1});
 
     const ComputePipelineDesc sdf_pipeline_desc{.module = sdf_shader_module_.get(),
                                                 .layout = sdf_pipeline_layout_.get()};
 
-    sdf_pipeline_ = create_compute_pipeline(backend_.device().get(), sdf_pipeline_desc);
+    sdf_pipeline_ = create_compute_pipeline(device_.get(), sdf_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(sdf_pipeline_.get()), "SDF Pipeline");
   }
@@ -345,15 +344,15 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange cascades_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CascadesPushConstant)};
 
     const auto cascades_shader = create_info.load_shader("cascades.slang.spv");
-    cascades_shader_module_ = create_shader_module(backend_.device().get(), cascades_shader);
+    cascades_shader_module_ = create_shader_module(device_.get(), cascades_shader);
 
     cascades_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&cascades_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&cascades_push, 1});
 
     const ComputePipelineDesc cascades_pipeline_desc{.module = cascades_shader_module_.get(),
                                                      .layout = cascades_pipeline_layout_.get()};
 
-    cascades_pipeline_ = create_compute_pipeline(backend_.device().get(), cascades_pipeline_desc);
+    cascades_pipeline_ = create_compute_pipeline(device_.get(), cascades_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(cascades_pipeline_.get()),
                                     "Cascades Pipeline");
@@ -364,15 +363,15 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange light_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(LightPushConstant)};
 
     const auto light_shader = create_info.load_shader("light.slang.spv");
-    light_shader_module_ = create_shader_module(backend_.device().get(), light_shader);
+    light_shader_module_ = create_shader_module(device_.get(), light_shader);
 
     light_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&light_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&light_push, 1});
 
     const ComputePipelineDesc light_pipeline_desc{.module = light_shader_module_.get(),
                                                   .layout = light_pipeline_layout_.get()};
 
-    light_pipeline_ = create_compute_pipeline(backend_.device().get(), light_pipeline_desc);
+    light_pipeline_ = create_compute_pipeline(device_.get(), light_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(light_pipeline_.get()),
                                     "Light Pipeline");
@@ -384,10 +383,10 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange blur_resolve_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurResolvePushConstant)};
 
     const auto blur_shader = create_info.load_shader("blur.slang.spv");
-    blur_shader_module_ = create_shader_module(backend_.device().get(), blur_shader);
+    blur_shader_module_ = create_shader_module(device_.get(), blur_shader);
 
     blur_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&blur_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&blur_push, 1});
 
     const ComputePipelineDesc blur_pipeline_desc{
         .module = blur_shader_module_.get(),
@@ -395,13 +394,13 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
         .layout = blur_pipeline_layout_.get(),
     };
 
-    blur_pipeline_ = create_compute_pipeline(backend_.device().get(), blur_pipeline_desc);
+    blur_pipeline_ = create_compute_pipeline(device_.get(), blur_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(blur_pipeline_.get()),
                                     "Blur Pipeline");
     // resolve
     blur_resolve_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&blur_resolve_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&blur_resolve_push, 1});
 
     const ComputePipelineDesc blur_resolve_pipeline_desc{
         .module = blur_shader_module_.get(),
@@ -409,7 +408,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
         .layout = blur_resolve_pipeline_layout_.get(),
     };
 
-    blur_resolve_pipeline_ = create_compute_pipeline(backend_.device().get(), blur_resolve_pipeline_desc);
+    blur_resolve_pipeline_ = create_compute_pipeline(device_.get(), blur_resolve_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(blur_resolve_pipeline_.get()),
                                     "Blur Resolve Pipeline");
@@ -420,15 +419,15 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
 
     const auto composite_shader = create_info.load_shader("composite.slang.spv");
-    composite_shader_module_ = create_shader_module(backend_.device().get(), composite_shader);
+    composite_shader_module_ = create_shader_module(device_.get(), composite_shader);
 
     composite_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&composite_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&composite_push, 1});
 
     const ComputePipelineDesc composite_pipeline_desc{.module = composite_shader_module_.get(),
                                                       .layout = composite_pipeline_layout_.get()};
 
-    composite_pipeline_ = create_compute_pipeline(backend_.device().get(), composite_pipeline_desc);
+    composite_pipeline_ = create_compute_pipeline(device_.get(), composite_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(composite_pipeline_.get()),
                                     "Composite Pipeline");
@@ -439,10 +438,10 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     vk::PushConstantRange blit_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant)};
 
     const auto blit_shader = create_info.load_shader("blit.slang.spv");
-    blit_shader_module_ = create_shader_module(backend_.device().get(), blit_shader);
+    blit_shader_module_ = create_shader_module(device_.get(), blit_shader);
 
     blit_pipeline_layout_ =
-        create_pipeline_layout(backend_.device().get(), {&backend_.bindless_layout(), 1}, {&blit_push, 1});
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&blit_push, 1});
 
     GraphicsPipelineDesc blit_pipeline_desc{};
     blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, blit_shader_module_.get(), "vs_main");
@@ -451,37 +450,37 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : backend_(create_
     blit_pipeline_desc.depth_stencil.depthTestEnable = vk::False;
     blit_pipeline_desc.depth_stencil.depthWriteEnable = vk::False;
 
-    blit_pipeline_desc.add_attachment(backend_.swapchain_format());
+    blit_pipeline_desc.add_attachment(swapchain_.format());
 
     blit_pipeline_desc.layout = blit_pipeline_layout_.get();
 
-    blit_pipeline_ = create_graphics_pipeline(backend_.device().get(), blit_pipeline_desc);
+    blit_pipeline_ = create_graphics_pipeline(device_.get(), blit_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(blit_pipeline_.get()),
                                     "Blit Pipeline");
   }
 
   for (auto& info: debug_object_names) {
-    if (backend_.device().get().setDebugUtilsObjectNameEXT(&info) != vk::Result::eSuccess) {
+    if (device_.get().setDebugUtilsObjectNameEXT(&info) != vk::Result::eSuccess) {
       throw std::runtime_error("Failed to set object name on pipeline");
     }
   }
 }
 
-Renderer2D::~Renderer2D() { backend_.device().get().waitIdle(); }
+Renderer2D::~Renderer2D() { device_.get().waitIdle(); }
 
 void Renderer2D::render(RenderInfo info)
 {
   info_ = std::move(info);
 
-  if (!backend_.begin_frame({info_.window_size.first, info_.window_size.second})) {
+  if (!begin_frame({info_.window_size.first, info_.window_size.second})) {
     return;
   }
 
   upload_sprites();
 
   if (should_draw_ != did_draw_) {
-    backend_.request_recompile();
+    should_compile_ = true;
   }
 
   if (config_.composite.blur_radius != previous_gaussian_radius_) {
@@ -493,71 +492,18 @@ void Renderer2D::render(RenderInfo info)
     previous_gaussian_radius_ = config_.composite.blur_radius;
   }
 
-  if (backend_.should_compile()) compile();
+  if (should_compile_) {
+    should_compile_ = false;
+    compile();
+  }
 
-  backend_.execute_frame();
-  backend_.end_frame();
+  execute_frame();
+  end_frame();
 
   sprites_.clear();
 
   did_draw_ = should_draw_;
   should_draw_ = false;
-}
-
-Renderer2D::Texture Renderer2D::create_texture(const std::span<const uint8_t> data,
-                                               const std::pair<uint32_t, uint32_t>& size)
-{
-  auto image = Image(backend_.device().get_allocator(), backend_.device().get(),
-                     ImageDesc{}
-                         .set_extent(size.first, size.second)
-                         .set_format(vk::Format::eR8G8B8A8Srgb)
-                         .set_usage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst)
-                         .set_debug_name(std::format("Texture {}", texture_images_.size())));
-
-  const vk::DeviceSize buffer_size = data.size() * sizeof(data[0]);
-  const auto staging = Buffer(backend_.device().get_allocator(), backend_.device().get(),
-                              BufferDesc{}
-                                  .set_size(buffer_size)
-                                  .set_usage(vk::BufferUsageFlagBits::eTransferSrc)
-                                  .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT));
-
-  void* mapped;
-  vmaMapMemory(backend_.device().get_allocator(), staging.allocation(), &mapped);
-  memcpy(mapped, data.data(), buffer_size);
-  vmaUnmapMemory(backend_.device().get_allocator(), staging.allocation());
-
-  backend_.immediate().submit([&](vk::CommandBuffer cmd) {
-    auto barrier = vk::ImageMemoryBarrier2{}
-                       .setSrcStageMask(vk::PipelineStageFlagBits2::eNone)
-                       .setSrcAccessMask(vk::AccessFlagBits2::eNone)
-                       .setDstStageMask(vk::PipelineStageFlagBits2::eCopy)
-                       .setDstAccessMask(vk::AccessFlagBits2::eTransferWrite)
-                       .setOldLayout(vk::ImageLayout::eUndefined)
-                       .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
-                       .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
-                       .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
-                       .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
-                       .setImage(image.image());
-    cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
-
-    const vk::BufferImageCopy2 region{
-        0, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {0, 0, 0}, {size.first, size.second, 1}};
-
-    cmd.copyBufferToImage2(
-        vk::CopyBufferToImageInfo2{staging.buffer(), image.image(), vk::ImageLayout::eTransferDstOptimal, 1, &region});
-
-    barrier.setSrcStageMask(vk::PipelineStageFlagBits2::eCopy);
-    barrier.setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite);
-    barrier.setDstStageMask(vk::PipelineStageFlagBits2::eFragmentShader);
-    barrier.setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead);
-    barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
-    barrier.setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
-    cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
-  });
-
-  texture_images_.emplace_back(std::move(image),
-                               image.create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor));
-  return Texture{static_cast<uint32_t>(texture_images_.size() - 1)};
 }
 
 void Renderer2D::plot(const std::pair<int, int>& pos)
@@ -568,15 +514,9 @@ void Renderer2D::plot(const std::pair<int, int>& pos)
 
 void Renderer2D::draw_sprite(Sprite sprite) { sprites_.emplace_back(sprite); }
 
-void Renderer2D::imgui_new_frame() { RenderBackend::imgui_new_frame(); }
-
-void Renderer2D::request_recompile() { backend_.request_recompile(); }
-
-fwrk::Graph::FrameTimings Renderer2D::get_timings() { return backend_.get_timings(); }
-
 void Renderer2D::compile()
 {
-  fwrk::Graph& graph = backend_.framework().graph();
+  fwrk::Graph& graph = context_.graph();
 
   if (!draw_image_ || draw_image_.value().extent().width != config_.scene_size.width) {
     create_images();
@@ -654,7 +594,7 @@ void Renderer2D::compile()
 
   graph.add_graphics_pass("Blit")
       .set_image_read({.resource = {.id = composite_id_}})
-      .set_color_attachment({.resource = {.id = backend_.swapchain_proxy()},
+      .set_color_attachment({.resource = {.id = swapchain_proxy_},
                              .load_op = fwrk::LoadOp::Clear,
                              .store_op = fwrk::StoreOp::Store,
                              .clear_value = {.r = 0.0f, .g = 0.0f, .b = 0.0f, .a = 0.0}})
@@ -662,13 +602,13 @@ void Renderer2D::compile()
 
   graph.add_graphics_pass("ImGui")
       .set_color_attachment({
-          .resource = {.id = backend_.swapchain_proxy()},
+          .resource = {.id = swapchain_proxy_},
           .load_op = fwrk::LoadOp::Load,
           .store_op = fwrk::StoreOp::Store,
       })
       .set_execute([this](vk::CommandBuffer cmd) { imgui_pass(cmd); });
 
-  graph.set_image_end_state(backend_.swapchain_proxy(),
+  graph.set_image_end_state(swapchain_proxy_,
                             {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
 
   graph.compile();
@@ -676,7 +616,7 @@ void Renderer2D::compile()
 
 void Renderer2D::draw_pass(vk::CommandBuffer cmd)
 {
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, draw_pipeline_layout_.get(), 0, 1, &backend_.bindless_set(),
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, draw_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, draw_pipeline_.get());
 
@@ -698,7 +638,7 @@ void Renderer2D::convert_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, convert_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, convert_pipeline_layout_.get(), 0, 1,
-                         &backend_.bindless_set(), 0, nullptr);
+                         &bindless_descriptor_set_, 0, nullptr);
 
   const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(config_.scene_size.width),
                               static_cast<float>(config_.scene_size.height)};
@@ -719,7 +659,7 @@ void Renderer2D::sprite_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, sprite_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, sprite_pipeline_layout_.get(), 0, 1,
-                         &backend_.bindless_set(), 0, nullptr);
+                         &bindless_descriptor_set_, 0, nullptr);
 
   const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(config_.scene_size.width),
                               static_cast<float>(config_.scene_size.height)};
@@ -739,8 +679,8 @@ void Renderer2D::sprite_pass(vk::CommandBuffer cmd)
 void Renderer2D::jfa_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, jfa_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1, &backend_.bindless_set(), 0,
-                         nullptr);
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, jfa_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
+                         0, nullptr);
 
   auto barrier =
       vk::ImageMemoryBarrier2{}
@@ -785,8 +725,8 @@ void Renderer2D::jfa_pass(vk::CommandBuffer cmd)
 void Renderer2D::sdf_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, sdf_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, sdf_pipeline_layout_.get(), 0, 1, &backend_.bindless_set(), 0,
-                         nullptr);
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, sdf_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
+                         0, nullptr);
 
   const SDFPushConstant push_constant{.jfa_id = JFAImage, .sdf_id = SDFImage, .layer = final_jfa_};
 
@@ -802,7 +742,7 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, cascades_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, cascades_pipeline_layout_.get(), 0, 1,
-                         &backend_.bindless_set(), 0, nullptr);
+                         &bindless_descriptor_set_, 0, nullptr);
 
   auto barrier =
       vk::ImageMemoryBarrier2{}
@@ -859,7 +799,7 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
 void Renderer2D::light_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, light_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, light_pipeline_layout_.get(), 0, 1, &backend_.bindless_set(),
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, light_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
 
   const LightPushConstant push_constant{
@@ -881,7 +821,7 @@ void Renderer2D::light_pass(vk::CommandBuffer cmd)
 void Renderer2D::blur_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, blur_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, blur_pipeline_layout_.get(), 0, 1, &backend_.bindless_set(),
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, blur_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
 
   auto barrier =
@@ -933,7 +873,7 @@ void Renderer2D::blur_pass(vk::CommandBuffer cmd)
 
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, blur_resolve_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, blur_resolve_pipeline_layout_.get(), 0, 1,
-                         &backend_.bindless_set(), 0, nullptr);
+                         &bindless_descriptor_set_, 0, nullptr);
 
   constexpr BlurResolvePushConstant resolve_push_constant{
       .light_rw_id = LightImage, .blur_id = BlurResolveTexture, .sampler_id = LinearSampler};
@@ -954,7 +894,7 @@ void Renderer2D::composite_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline_.get());
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout_.get(), 0, 1,
-                         &backend_.bindless_set(), 0, nullptr);
+                         &bindless_descriptor_set_, 0, nullptr);
 
   const CompositePushConstant push_constant{.composite_id = CompositeImage,
                                             .light_id = LightImage,
@@ -974,7 +914,7 @@ void Renderer2D::composite_pass(vk::CommandBuffer cmd)
 void Renderer2D::blit_pass(vk::CommandBuffer cmd)
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, blit_pipeline_.get());
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blit_pipeline_layout_.get(), 0, 1, &backend_.bindless_set(),
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blit_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
                          0, nullptr);
 
   const auto swp_w = static_cast<float>(info_.window_size.first);
@@ -1023,82 +963,82 @@ void Renderer2D::import_images()
       .state = fwrk::PhysicalState::Undefined};
 
   if (draw_id_) {
-    backend_.framework().update_image(draw_id_, image_import_info, draw_image_->image());
+    context_.update_image(draw_id_, image_import_info, draw_image_->image());
   } else {
-    draw_id_ = backend_.framework().import_image(image_import_info, draw_image_->image());
+    draw_id_ = context_.import_image(image_import_info, draw_image_->image());
   }
 
   image_import_info.format = VK_FORMAT_R8G8B8A8_SRGB;
   if (scene_color_id_) {
-    backend_.framework().update_image(scene_color_id_, image_import_info, scene_color_image_->image());
+    context_.update_image(scene_color_id_, image_import_info, scene_color_image_->image());
   } else {
-    scene_color_id_ = backend_.framework().import_image(image_import_info, scene_color_image_->image());
+    scene_color_id_ = context_.import_image(image_import_info, scene_color_image_->image());
   }
 
   image_import_info.format = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
   if (scene_radiance_id_) {
-    backend_.framework().update_image(scene_radiance_id_, image_import_info, scene_radiance_image_->image());
+    context_.update_image(scene_radiance_id_, image_import_info, scene_radiance_image_->image());
   } else {
-    scene_radiance_id_ = backend_.framework().import_image(image_import_info, scene_radiance_image_->image());
+    scene_radiance_id_ = context_.import_image(image_import_info, scene_radiance_image_->image());
   }
 
   image_import_info.format = VK_FORMAT_R32G32B32A32_SINT;
   image_import_info.layer_count = 2;
   if (jfa_id_) {
-    backend_.framework().update_image(jfa_id_, image_import_info, jfa_image_->image());
+    context_.update_image(jfa_id_, image_import_info, jfa_image_->image());
   } else {
-    jfa_id_ = backend_.framework().import_image(image_import_info, jfa_image_->image());
+    jfa_id_ = context_.import_image(image_import_info, jfa_image_->image());
   }
   image_import_info.layer_count = 1;
 
   image_import_info.format = VK_FORMAT_R32_SFLOAT;
   if (sdf_id_) {
-    backend_.framework().update_image(sdf_id_, image_import_info, sdf_image_->image());
+    context_.update_image(sdf_id_, image_import_info, sdf_image_->image());
   } else {
-    sdf_id_ = backend_.framework().import_image(image_import_info, sdf_image_->image());
+    sdf_id_ = context_.import_image(image_import_info, sdf_image_->image());
   }
 
   image_import_info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
   if (light_id_) {
-    backend_.framework().update_image(light_id_, image_import_info, light_image_->image());
+    context_.update_image(light_id_, image_import_info, light_image_->image());
   } else {
-    light_id_ = backend_.framework().import_image(image_import_info, light_image_->image());
+    light_id_ = context_.import_image(image_import_info, light_image_->image());
   }
 
   if (blur_id_) {
-    backend_.framework().update_image(blur_id_, image_import_info, blur_image_->image());
+    context_.update_image(blur_id_, image_import_info, blur_image_->image());
   } else {
-    blur_id_ = backend_.framework().import_image(image_import_info, blur_image_->image());
+    blur_id_ = context_.import_image(image_import_info, blur_image_->image());
   }
 
   if (composite_id_) {
-    backend_.framework().update_image(composite_id_, image_import_info, composite_image_->image());
+    context_.update_image(composite_id_, image_import_info, composite_image_->image());
   } else {
-    composite_id_ = backend_.framework().import_image(image_import_info, composite_image_->image());
+    composite_id_ = context_.import_image(image_import_info, composite_image_->image());
   }
 
   image_import_info.size.width = cascades_width_;
   image_import_info.size.height = cascades_height_;
   image_import_info.layer_count = config_.cascades.cascades;
   if (cascades_id_) {
-    backend_.framework().update_image(cascades_id_, image_import_info, cascades_image_->image());
+    context_.update_image(cascades_id_, image_import_info, cascades_image_->image());
   } else {
-    cascades_id_ = backend_.framework().import_image(image_import_info, cascades_image_->image());
+    cascades_id_ = context_.import_image(image_import_info, cascades_image_->image());
   }
 }
 
 void Renderer2D::create_images()
 {
-  backend_.device().get().waitIdle();
+  device_.get().waitIdle();
 
-  draw_image_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  draw_image_.emplace(device_.get_allocator(), device_.get(),
                       ImageDesc{}
                           .set_extent(config_.scene_size.width, config_.scene_size.height)
                           .set_format(vk::Format::eR8Uint)
                           .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
                           .set_debug_name("Draw Image"));
 
-  scene_color_image_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  scene_color_image_.emplace(device_.get_allocator(), device_.get(),
                              ImageDesc{}
                                  .set_extent(config_.scene_size.width, config_.scene_size.height)
                                  .set_format(vk::Format::eR8G8B8A8Srgb)
@@ -1106,14 +1046,14 @@ void Renderer2D::create_images()
                                  .set_debug_name("Scene Color Image"));
 
   scene_radiance_image_.emplace(
-      backend_.device().get_allocator(), backend_.device().get(),
+      device_.get_allocator(), device_.get(),
       ImageDesc{}
           .set_extent(config_.scene_size.width, config_.scene_size.height)
           .set_format(vk::Format::eB10G11R11UfloatPack32)
           .set_usage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled)
           .set_debug_name("Scene Radiance Image"));
 
-  jfa_image_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  jfa_image_.emplace(device_.get_allocator(), device_.get(),
                      ImageDesc{}
                          .set_extent(config_.scene_size.width, config_.scene_size.height)
                          .set_format(vk::Format::eR32G32B32A32Sint)
@@ -1121,21 +1061,21 @@ void Renderer2D::create_images()
                          .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eColorAttachment)
                          .set_debug_name("JFA Images"));
 
-  sdf_image_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  sdf_image_.emplace(device_.get_allocator(), device_.get(),
                      ImageDesc{}
                          .set_extent(config_.scene_size.width, config_.scene_size.height)
                          .set_format(vk::Format::eR32Sfloat)
                          .set_usage(vk::ImageUsageFlagBits::eStorage)
                          .set_debug_name("SDF Image"));
 
-  light_image_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  light_image_.emplace(device_.get_allocator(), device_.get(),
                        ImageDesc{}
                            .set_extent(config_.scene_size.width, config_.scene_size.height)
                            .set_format(vk::Format::eR16G16B16A16Sfloat)
                            .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
                            .set_debug_name("Light Image"));
 
-  blur_image_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  blur_image_.emplace(device_.get_allocator(), device_.get(),
                       ImageDesc{}
                           .set_extent(config_.scene_size.width >> 1, config_.scene_size.height >> 1)
                           .set_format(vk::Format::eR16G16B16A16Sfloat)
@@ -1143,7 +1083,7 @@ void Renderer2D::create_images()
                           .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
                           .set_debug_name("Blur Image"));
 
-  composite_image_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  composite_image_.emplace(device_.get_allocator(), device_.get(),
                            ImageDesc{}
                                .set_extent(config_.scene_size.width, config_.scene_size.height)
                                .set_format(vk::Format::eR16G16B16A16Sfloat)
@@ -1151,27 +1091,26 @@ void Renderer2D::create_images()
                                .set_debug_name("Composite Image"));
 
 
-  draw_view_ = draw_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor);
-  scene_color_view_ = scene_color_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor);
-  scene_radiance_view_ =
-      scene_radiance_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor);
-  jfa_view_ = jfa_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor,
-                                            vk::ImageViewType::e2DArray);
-  sdf_view_ = sdf_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor);
-  light_view_ = light_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor);
-  blur_array_view_ = blur_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor,
-                                                    vk::ImageViewType::e2DArray);
-  blur_view_ = blur_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor,
-                                              vk::ImageViewType::e2D, {}, 0);
-  blur_resolve_view_ = blur_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor,
-                                                      vk::ImageViewType::e2D, {}, 1);
-  composite_view_ = composite_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor);
+  draw_view_ = draw_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  scene_color_view_ = scene_color_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  scene_radiance_view_ = scene_radiance_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  jfa_view_ =
+      jfa_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
+  sdf_view_ = sdf_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  light_view_ = light_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  blur_array_view_ =
+      blur_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
+  blur_view_ =
+      blur_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2D, {}, 0);
+  blur_resolve_view_ =
+      blur_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2D, {}, 1);
+  composite_view_ = composite_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
 
   void* ubo_data;
-  vmaMapMemory(backend_.device().get_allocator(), ubo_->allocation(), &ubo_data);
+  vmaMapMemory(device_.get_allocator(), ubo_->allocation(), &ubo_data);
   const UBOData ubo{.image_width = config_.scene_size.width, .image_height = config_.scene_size.height};
   memcpy(ubo_data, &ubo, sizeof(UBOData));
-  vmaUnmapMemory(backend_.device().get_allocator(), ubo_->allocation());
+  vmaUnmapMemory(device_.get_allocator(), ubo_->allocation());
 }
 
 void Renderer2D::create_cascade_image()
@@ -1188,15 +1127,15 @@ void Renderer2D::create_cascade_image()
   base_probe_spacing_ = config_.cascades.base_spacing;
   base_probe_length_ = config_.cascades.base_length;
 
-  cascades_image_.emplace(backend_.device().get_allocator(), backend_.device().get(),
+  cascades_image_.emplace(device_.get_allocator(), device_.get(),
                           ImageDesc{}
                               .set_extent(cascades_width_, cascades_height_)
                               .set_format(vk::Format::eR16G16B16A16Sfloat)
                               .set_layers(config_.cascades.cascades)
                               .set_usage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
                               .set_debug_name("Cascade Images"));
-  cascades_view_ = cascades_image_->create_image_view(backend_.device().get(), vk::ImageAspectFlagBits::eColor,
-                                                      vk::ImageViewType::e2DArray);
+  cascades_view_ =
+      cascades_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor, vk::ImageViewType::e2DArray);
 }
 
 void Renderer2D::update_descriptor()
@@ -1227,24 +1166,24 @@ void Renderer2D::update_descriptor()
                  vk::ImageLayout::eShaderReadOnlyOptimal);
 
   for (uint32_t i = 0; i < texture_images_.size(); i++) {
-    writer.add_image(2, SpriteTextures + i, vk::DescriptorType::eSampledImage, texture_images_[i].second.get(),
+    writer.add_image(2, SpriteTextures + i, vk::DescriptorType::eSampledImage, texture_images_.at(i).second.get(),
                      vk::ImageLayout::eShaderReadOnlyOptimal);
   }
 
-  writer.update(backend_.device().get(), backend_.bindless_set());
+  writer.update(device_.get(), bindless_descriptor_set_);
 }
 
 void Renderer2D::upload_sprites()
 {
-  if (!sprites_buffers_.at(backend_.frame_index())) return;
-  const Buffer& buffer = *sprites_buffers_.at(backend_.frame_index());
+  if (!sprites_buffers_.at(current_frame_)) return;
+  const Buffer& buffer = *sprites_buffers_.at(current_frame_);
 
   std::memcpy(buffer.get_mapped_data(), sprites_.data(), sprites_.size() * sizeof(SpriteGPU));
   buffer.flush_allocation(0, sprites_.size() * sizeof(SpriteGPU));
 
   DescriptorWriter{}
       .add_buffer(1, SpriteBuffer, vk::DescriptorType::eStorageBuffer, buffer.buffer())
-      .update(backend_.device().get(), backend_.bindless_set());
+      .update(device_.get(), bindless_descriptor_set_);
 }
 
 void Renderer2D::calculate_gaussian(const uint32_t radius, const float k)

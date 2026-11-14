@@ -2,10 +2,9 @@
 #include "event_dispatcher.hpp"
 #include "file_system.hpp"
 #include "input.hpp"
-#include "render/current_renderer.hpp"
+#include "render/active_renderer.hpp"
+#include "render/renderer_fwd.hpp"
 #include "resource/resource_manager.hpp"
-#include "resource/types/image_resource.hpp"
-#include "resource/types/shader_resource.hpp"
 #include "sdl_init.hpp"
 #include "user_interface.hpp"
 #include "window.hpp"
@@ -24,12 +23,12 @@ private:
   Window window_;
   Input input_;
   FileSystem file_system_;
-  ResourceManager<ShaderResource, ImageResource> resource_manager_;
+  ResourceManager resource_manager_;
   UserInterface user_interface_;
-  CurrentRenderer renderer_;
+  ActiveRenderer renderer_;
   bool running = true;
 
   void poll_events();
 
-  CurrentRenderer create_renderer();
+  ActiveRenderer create_renderer();
 };

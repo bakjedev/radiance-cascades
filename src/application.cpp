@@ -1,6 +1,9 @@
 #include "application.hpp"
 #include <SDL3/SDL_vulkan.h>
 #include <iostream>
+#include "resource/types/gltf_resource.hpp"
+#include "resource/types/image_resource.hpp"
+#include "resource/types/shader_resource.hpp"
 
 struct QuitEvent {};
 
@@ -18,6 +21,9 @@ void Application::run()
 
   file_system_.add_route("assets", "../assets");
 
+  // auto texture_resource =
+  //     resource_manager_.create_from_file<ImageResource>("image.png", ImageResourceLoader{&file_system_, &renderer_});
+
   while (running) {
     input_.begin_frame();
     poll_events();
@@ -27,9 +33,14 @@ void Application::run()
       running = false;
     }
 
-    // if (input_.mouse_down(MouseButton::Left) && !UserInterface::consuming()) {
-    //   renderer_.plot({input_.mouse_x(), input_.mouse_y()});
-    // }
+    if (input_.mouse_down(MouseButton::Left) && !UserInterface::consuming()) {
+      renderer_.plot({input_.mouse_x(), input_.mouse_y()});
+    }
+
+    // renderer_.draw_sprite(Renderer2D::Sprite{.texture = texture_resource->gpu_image,
+    //                                          .pos = {100.0f, 500.0f},
+    //                                          .size = {1.0f, 1.0f},
+    //                                          .tint = {1.0f, 1.0f, 1.0f}});
 
     auto* imgui_draw_data = user_interface_.render(renderer_);
 
@@ -74,21 +85,20 @@ void Application::poll_events()
   }
 }
 
-CurrentRenderer Application::create_renderer()
+ActiveRenderer Application::create_renderer()
 {
   uint32_t sdl_instance_extension_count = 0;
   const auto* const sdl_instance_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_instance_extension_count);
 
-  return CurrentRenderer(RendererCreateInfo{
+  return ActiveRenderer(RendererCreateInfo{
       .instance_extensions = {sdl_instance_extensions, sdl_instance_extension_count},
-      .create_surface =
-          [this](VkInstance instance) {
-            VkSurfaceKHR surface = VK_NULL_HANDLE;
-            if (!SDL_Vulkan_CreateSurface(window_.get(), instance, nullptr, &surface)) {
-              throw std::runtime_error("Failed to create Vulkan Surface with SDL");
-            }
-            return surface;
-          },
+      .create_surface = [this](vk::Instance instance) -> vk::SurfaceKHR {
+        VkSurfaceKHR surface = VK_NULL_HANDLE;
+        if (!SDL_Vulkan_CreateSurface(window_.get(), instance, nullptr, &surface)) {
+          throw std::runtime_error("Failed to create Vulkan Surface with SDL");
+        }
+        return surface;
+      },
       .initial_extent = {window_.width(), window_.height()},
       .load_shader =
           [this](const std::string& name) {

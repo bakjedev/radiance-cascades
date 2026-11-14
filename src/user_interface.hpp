@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "render/renderer.hpp"
+#include "render/renderer_interface.hpp"
 
 class Renderer2D;
 class Renderer3D;
@@ -16,7 +16,7 @@ public:
   explicit UserInterface(SDL_Window* window);
   ~UserInterface();
 
-  template<Renderer T>
+  template<RendererInterface T>
   ImDrawData* render(T& renderer)
   {
     T::imgui_new_frame();

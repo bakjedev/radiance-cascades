@@ -1,8 +1,10 @@
 #pragma once
 #include "framework/context.hpp"
-#include "renderer.hpp"
+#include "renderer_fwd.hpp"
+#include "renderer_types.hpp"
 #include "src/vulkan/device.hpp"
 #include "src/vulkan/frame.hpp"
+#include "src/vulkan/image.hpp"
 #include "src/vulkan/immediate_submit.hpp"
 #include "src/vulkan/instance.hpp"
 #include "src/vulkan/swapchain.hpp"
@@ -17,22 +19,13 @@ public:
   void execute_frame();
   void end_frame();
   void window_resize(int width, int height);
-  fwrk::Context& framework();
-  Device& device();
-  ImmediateSubmit& immediate();
-  [[nodiscard]] const Frame& get_current_frame() const;
-  [[nodiscard]] vk::Format swapchain_format() const;
-  [[nodiscard]] fwrk::ResourceID swapchain_proxy() const;
-  [[nodiscard]] const vk::DescriptorSetLayout& bindless_layout() const;
-  [[nodiscard]] const vk::DescriptorSet& bindless_set() const;
-  [[nodiscard]] vk::Sampler sampler() const;
   fwrk::Graph::FrameTimings get_timings();
   void request_recompile();
-  [[nodiscard]] bool should_compile() const;
   static void imgui_new_frame();
-  [[nodiscard]] uint32_t frame_index() const;
 
-private:
+  GPUImage create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size);
+
+protected:
   Instance instance_;
   Device device_;
   Swapchain swapchain_;
@@ -41,21 +34,30 @@ private:
   fwrk::Context context_;
   ImmediateSubmit immediate_;
 
+private:
   vk::UniqueDescriptorPool descriptor_pool_;
+
+protected:
   vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;
   vk::DescriptorSet bindless_descriptor_set_;
 
   vk::UniqueSampler sampler_;
 
+private:
   std::vector<fwrk::ResourceID> swapchain_imports_;
+  uint32_t image_index_{};
+  bool needs_recreate_ = false;
+
+protected:
   fwrk::ResourceID swapchain_proxy_;
 
   uint32_t current_frame_{};
-  uint32_t image_index_{};
 
-  bool needs_recreate_ = false;
   bool should_compile_ = true;
 
+  std::vector<std::pair<Image, vk::UniqueImageView>> texture_images_;
+
+private:
   void import_swapchain_images();
 
   [[nodiscard]] fwrk::Context create_fwrk_context() const;

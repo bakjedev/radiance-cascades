@@ -1,0 +1,14 @@
+[wrap-file]
+directory = glm-1.0.3
+source_url = https://github.com/g-truc/glm/archive/refs/tags/1.0.3.tar.gz
+source_filename = glm-1.0.3.tar.gz
+source_hash = 6775e47231a446fd086d660ecc18bcd076531cfedd912fbd66e576b118607001
+source_fallback_url = https://wrapdb.mesonbuild.com/v2/glm_1.0.3-1/get_source/glm-1.0.3.tar.gz
+patch_filename = glm_1.0.3-1_patch.zip
+patch_url = https://wrapdb.mesonbuild.com/v2/glm_1.0.3-1/get_patch
+patch_fallback_url = https://github.com/mesonbuild/wrapdb/releases/download/glm_1.0.3-1/glm_1.0.3-1_patch.zip
+patch_hash = 3bf599c81eb2509d99bd109300324ef45f7fc6d334a57a6679ec0e05d485eb16
+wrapdb_version = 1.0.3-1
+
+[provide]
+dependency_names = glm

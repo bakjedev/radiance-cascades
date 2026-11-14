@@ -1,6 +1,7 @@
 #include "render_backend.hpp"
 
 #include "imgui_impl_vulkan.h"
+#include "src/vulkan/buffer.hpp"
 #include "src/vulkan/descriptor.hpp"
 
 RenderBackend::RenderBackend(const RendererCreateInfo& create_info) :
@@ -168,33 +169,66 @@ void RenderBackend::window_resize(const int width, const int height)
   import_swapchain_images();
 }
 
-fwrk::Context& RenderBackend::framework() { return context_; }
-
-Device& RenderBackend::device() { return device_; }
-
-ImmediateSubmit& RenderBackend::immediate() { return immediate_; }
-
-const Frame& RenderBackend::get_current_frame() const { return frames_.at(current_frame_); }
-
-vk::Format RenderBackend::swapchain_format() const { return swapchain_.format(); }
-
-fwrk::ResourceID RenderBackend::swapchain_proxy() const { return swapchain_proxy_; }
-
-const vk::DescriptorSetLayout& RenderBackend::bindless_layout() const { return bindless_descriptor_set_layout_.get(); }
-
-const vk::DescriptorSet& RenderBackend::bindless_set() const { return bindless_descriptor_set_; }
-
-vk::Sampler RenderBackend::sampler() const { return sampler_.get(); }
-
 fwrk::Graph::FrameTimings RenderBackend::get_timings() { return context_.graph().get_timings(); }
 
 void RenderBackend::request_recompile() { should_compile_ = true; }
 
-bool RenderBackend::should_compile() const { return should_compile_; }
-
 void RenderBackend::imgui_new_frame() { ImGui_ImplVulkan_NewFrame(); }
 
-uint32_t RenderBackend::frame_index() const { return current_frame_; }
+GPUImage RenderBackend::create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size)
+{
+  auto image = Image(device_.get_allocator(), device_.get(),
+                     ImageDesc{}
+                         .set_extent(size.first, size.second)
+                         .set_format(vk::Format::eR8G8B8A8Srgb)
+                         .set_usage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst)
+                         .set_debug_name(std::format("Texture {}", texture_images_.size())));
+
+  const vk::DeviceSize buffer_size = data.size() * sizeof(data[0]);
+  const auto staging = Buffer(device_.get_allocator(), device_.get(),
+                              BufferDesc{}
+                                  .set_size(buffer_size)
+                                  .set_usage(vk::BufferUsageFlagBits::eTransferSrc)
+                                  .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT));
+
+  void* mapped;
+  vmaMapMemory(device_.get_allocator(), staging.allocation(), &mapped);
+  memcpy(mapped, data.data(), buffer_size);
+  vmaUnmapMemory(device_.get_allocator(), staging.allocation());
+
+  immediate_.submit([&](vk::CommandBuffer cmd) {
+    auto barrier = vk::ImageMemoryBarrier2{}
+                       .setSrcStageMask(vk::PipelineStageFlagBits2::eNone)
+                       .setSrcAccessMask(vk::AccessFlagBits2::eNone)
+                       .setDstStageMask(vk::PipelineStageFlagBits2::eCopy)
+                       .setDstAccessMask(vk::AccessFlagBits2::eTransferWrite)
+                       .setOldLayout(vk::ImageLayout::eUndefined)
+                       .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
+                       .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
+                       .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
+                       .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
+                       .setImage(image.image());
+    cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+
+    const vk::BufferImageCopy2 region{
+        0, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {0, 0, 0}, {size.first, size.second, 1}};
+
+    cmd.copyBufferToImage2(
+        vk::CopyBufferToImageInfo2{staging.buffer(), image.image(), vk::ImageLayout::eTransferDstOptimal, 1, &region});
+
+    barrier.setSrcStageMask(vk::PipelineStageFlagBits2::eCopy);
+    barrier.setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite);
+    barrier.setDstStageMask(vk::PipelineStageFlagBits2::eFragmentShader);
+    barrier.setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead);
+    barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
+    barrier.setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
+    cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+  });
+
+  texture_images_.emplace_back(std::move(image),
+                               image.create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor));
+  return GPUImage{static_cast<uint32_t>(texture_images_.size() - 1)};
+}
 
 void RenderBackend::import_swapchain_images()
 {

@@ -25,7 +25,9 @@ sdl3_dep = dependency('sdl3', include_type : 'system', default_options : ['defau
 vma_dep = dependency('VulkanMemoryAllocator', include_type : 'system')
 imgui_dep = dependency('imgui', include_type : 'system', default_options : ['default_library=static'])
 implot_dep = dependency('implot', include_type : 'system', default_options : ['default_library=static'])
+glm_dep = dependency('glm', include_type : 'system', default_options : ['default_library=static'])
 stb_dep = dependency('stb')
+fastgltf_dep = dependency('fastgltf', include_type : 'system', default_options : ['default_library=static'])
 
 if compiler.get_argument_syntax() == 'msvc'
     add_project_arguments('/external:anglebrackets', '/external:W0', language : 'cpp')
@@ -39,6 +41,7 @@ sources = files(
     'src/input.cpp',
     'src/resource/types/shader_resource.cpp',
     'src/resource/types/image_resource.cpp',
+    'src/resource/types/gltf_resource.cpp',
     'src/render/render_backend.cpp',
     'src/render/renderer_2d.cpp',
     'src/render/renderer_3d.cpp',
@@ -76,4 +79,8 @@ foreach shader : shaders
     )
 endforeach
 
-executable('radiance-cascades', sources, compiled_shaders, dependencies : [framework_dep, vulkan_dep, sdl3_dep, vma_dep, imgui_dep, implot_dep, stb_dep])
+executable('radiance-cascades', sources, compiled_shaders, dependencies : [framework_dep, vulkan_dep,
+                                                                           sdl3_dep, vma_dep,
+                                                                           imgui_dep, implot_dep,
+                                                                           glm_dep, stb_dep,
+                                                                           fastgltf_dep])

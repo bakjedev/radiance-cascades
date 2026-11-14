@@ -1,16 +1,19 @@
 #pragma once
 #include "render_backend.hpp"
-#include "renderer.hpp"
+#include "renderer_interface.hpp"
 
-class Renderer3D {
+class Renderer3D : public RenderBackend {
 public:
   explicit Renderer3D(const RendererCreateInfo& create_info);
   ~Renderer3D();
   void render(RenderInfo info);
-  static void imgui_new_frame();
-  void request_recompile();
-  [[nodiscard]] fwrk::Graph::FrameTimings get_timings();
 
 private:
-  RenderBackend backend_;
+  RenderInfo info_{};
+
+  void compile();
+
+  void imgui_pass(vk::CommandBuffer cmd) const;
 };
+
+static_assert(RendererInterface<Renderer3D>);

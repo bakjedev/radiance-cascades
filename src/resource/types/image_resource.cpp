@@ -1,6 +1,7 @@
 #include "image_resource.hpp"
 #include <stdexcept>
 #include "src/file_system.hpp"
+#include "src/render/active_renderer.hpp"
 #include "stb_image.h"
 
 ImageResource ImageResourceLoader::operator()(const std::string& path) const
@@ -12,10 +13,18 @@ ImageResource ImageResourceLoader::operator()(const std::string& path) const
   stbi_uc* data = stbi_load(full_path.value.c_str(), &width, &height, &channels, STBI_rgb_alpha);
   if (!data) throw std::runtime_error("Failed to load image resource");
 
-  ImageResource res{.pixels = std::vector(data, data + static_cast<size_t>(width * height * 4)),
-                    .size = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)}};
+  const std::pair size = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+  ImageResource res{
+      .gpu_image = renderer->create_texture(std::vector(data, data + static_cast<size_t>(width * height * 4)), size),
+      .size = size};
 
   stbi_image_free(data);
 
   return res;
+}
+
+ImageResource ImageResourceLoader::operator()(std::vector<uint8_t>& pixels,
+                                              const std::pair<uint32_t, uint32_t>& size) const
+{
+  return ImageResource{.gpu_image = renderer->create_texture(pixels, size), .size = size};
 }

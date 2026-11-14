@@ -1,13 +1,13 @@
 #pragma once
 #include "framework/context.hpp"
 #include "render_backend.hpp"
-#include "renderer.hpp"
+#include "renderer_interface.hpp"
 #include "src/vulkan/buffer.hpp"
 #include "src/vulkan/image.hpp"
 
 struct ImDrawData;
 
-class Renderer2D {
+class Renderer2D : public RenderBackend {
 public:
   struct Renderer2DConfig {
     struct DrawConfig {
@@ -42,12 +42,8 @@ public:
     float paddington{};
   };
 
-  struct Texture {
-    uint32_t id;
-  };
-
   struct Sprite {
-    Texture texture;
+    GPUImage texture;
     std::pair<float, float> pos;
     std::pair<float, float> size = {1.0f, 1.0f};
     std::tuple<float, float, float> tint = {1.0f, 1.0f, 1.0f};
@@ -58,15 +54,8 @@ public:
 
   void render(RenderInfo info);
 
-  Texture create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size);
-
   void plot(const std::pair<int, int>& pos);
   void draw_sprite(Sprite sprite);
-
-  static void imgui_new_frame();
-  void request_recompile();
-
-  [[nodiscard]] fwrk::Graph::FrameTimings get_timings();
 
   Renderer2DConfig& config() { return config_; }
   const std::vector<Material>& materials() { return materials_; }
@@ -103,8 +92,6 @@ private:
 
   Renderer2DConfig config_;
   RenderInfo info_{};
-
-  RenderBackend backend_;
 
   vk::UniquePipelineLayout draw_pipeline_layout_;
   vk::UniqueShaderModule draw_shader_module_;
@@ -188,8 +175,6 @@ private:
   vk::UniqueImageView composite_view_;
   fwrk::ResourceID composite_id_;
 
-  std::vector<std::pair<Image, vk::UniqueImageView>> texture_images_;
-
   std::optional<Buffer> material_buffer_;
   std::optional<Buffer> ubo_;
   std::optional<Buffer> gaussian_weights_buffer_;
@@ -227,3 +212,5 @@ private:
 
   [[nodiscard]] std::pair<int32_t, int32_t> screen_to_pos(const std::pair<int32_t, int32_t>& screen) const;
 };
+
+static_assert(RendererInterface<Renderer2D>);
