@@ -10,6 +10,7 @@ public:
 
   GPUSampler create_sampler(Filter min_filter, Filter mag_filter, Wrap wrap_s, Wrap wrap_t);
   GPUMaterial create_material(const MaterialInfo& material);
+  void upload_vertices(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
 
 private:
   static constexpr uint32_t MaterialTextureBits = 24;

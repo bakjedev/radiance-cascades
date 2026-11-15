@@ -56,3 +56,11 @@ struct MaterialInfo {
     } albedo, metal_roughness, normal, occlusion, emissive;
   } textures;
 };
+
+struct Vertex {
+  glm::vec3 position;
+  glm::vec3 normal;
+  glm::vec2 tex_coord_0;
+  glm::vec2 tex_coord_1;
+  glm::vec4 tangent;
+};

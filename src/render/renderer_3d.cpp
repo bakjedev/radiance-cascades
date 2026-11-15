@@ -22,6 +22,7 @@ void Renderer3D::render([[maybe_unused]] RenderInfo info)
 GPUSampler Renderer3D::create_sampler([[maybe_unused]] Filter min_filter, [[maybe_unused]] Filter mag_filter,
                                       [[maybe_unused]] Wrap wrap_s, [[maybe_unused]] Wrap wrap_t)
 {
+  // WIP
   const auto id = static_cast<uint32_t>(samplers_.size());
   samplers_.emplace_back();
   return {id};
@@ -36,6 +37,12 @@ GPUMaterial Renderer3D::create_material(const MaterialInfo& material)
                           pack_texture_index(material.textures.normal), pack_texture_index(material.textures.occlusion),
                           pack_texture_index(material.textures.emissive));
   return {id};
+}
+
+void Renderer3D::upload_vertices([[maybe_unused]] const std::vector<Vertex>& vertices,
+                                 [[maybe_unused]] const std::vector<uint32_t>& indices)
+{
+  // WIP
 }
 
 void Renderer3D::compile()
