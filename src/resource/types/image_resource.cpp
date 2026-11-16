@@ -23,7 +23,7 @@ ImageResource ImageResourceLoader::operator()(const std::string& path) const
   return res;
 }
 
-ImageResource ImageResourceLoader::operator()(const std::vector<std::byte>& image_data) const
+ImageResource ImageResourceLoader::operator()(const std::span<const std::byte> image_data) const
 {
   int width, height, channels;
   stbi_uc* data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(image_data.data()),

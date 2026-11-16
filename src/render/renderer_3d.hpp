@@ -1,6 +1,7 @@
 #pragma once
 #include "render_backend.hpp"
 #include "renderer_interface.hpp"
+#include "src/vulkan/buffer.hpp"
 
 class Renderer3D : public RenderBackend {
 public:
@@ -38,6 +39,9 @@ private:
 
   std::vector<vk::UniqueSampler> samplers_;
   std::vector<Material> materials_;
+
+  std::optional<Buffer> vertex_buffer_;
+  std::optional<Buffer> index_buffer_;
 
   void compile();
 

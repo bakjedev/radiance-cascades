@@ -16,7 +16,7 @@ struct ImageResource {
 
 struct ImageResourceLoader {
   ImageResource operator()(const std::string& path) const;
-  ImageResource operator()(const std::vector<std::byte>& image_data) const;
+  ImageResource operator()(std::span<const std::byte> image_data) const;
 
   FileSystem* file_system;
   RenderBackend* renderer;

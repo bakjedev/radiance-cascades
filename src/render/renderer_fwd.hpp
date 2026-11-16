@@ -1,7 +1,5 @@
 #pragma once
 
-// #define RENDERER_3D
-
 class Renderer2D;
 class Renderer3D;
 

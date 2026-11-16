@@ -24,6 +24,9 @@ void Application::run()
   // auto texture_resource =
   //     resource_manager_.create_from_file<ImageResource>("image.png", ImageResourceLoader{&file_system_, &renderer_});
 
+  // auto gltf_resource = resource_manager_.create_from_file<GLTFResource>(
+  //     "DamagedHelmet.glb", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
+
   while (running) {
     input_.begin_frame();
     poll_events();

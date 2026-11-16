@@ -105,10 +105,54 @@ GPUMaterial Renderer3D::create_material(const MaterialInfo& material)
   return {id};
 }
 
-void Renderer3D::upload_vertices([[maybe_unused]] const std::vector<Vertex>& vertices,
-                                 [[maybe_unused]] const std::vector<uint32_t>& indices)
+void Renderer3D::upload_vertices(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
 {
-  // WIP
+  device_.get().waitIdle(); // bit blunt, could queue these uploads instead and handle the sync in next frame.
+
+  BufferDesc staging_desc{
+      .usage = vk::BufferUsageFlagBits::eTransferSrc,
+      .memory_usage = VMA_MEMORY_USAGE_AUTO,
+      .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+
+  const auto vertex_size = vertices.size() * sizeof(Vertex);
+  staging_desc.set_size(vertex_size);
+  const Buffer staging_vertex{device_.get_allocator(), device_.get(), staging_desc};
+  std::memcpy(staging_vertex.get_mapped_data(), vertices.data(), vertex_size);
+
+  const auto index_size = indices.size() * sizeof(uint32_t);
+  staging_desc.set_size(index_size);
+  const Buffer staging_index{device_.get_allocator(), device_.get(), staging_desc};
+  std::memcpy(staging_index.get_mapped_data(), indices.data(), index_size);
+
+  vertex_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{.size = vertex_size,
+                 .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                 .debug_name = "Vertex Buffer"});
+
+  index_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{.size = index_size,
+                 .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                 .debug_name = "Index Buffer"});
+
+  immediate_.submit([&](vk::CommandBuffer cmd) {
+    vk::BufferCopy2 region{};
+    region.setSize(vertex_size);
+
+    vk::CopyBufferInfo2 info{};
+    info.setSrcBuffer(staging_vertex.buffer());
+    info.setDstBuffer(vertex_buffer_->buffer());
+    info.setRegions(region);
+    cmd.copyBuffer2(&info);
+
+    region.setSize(index_size);
+    info.setSrcBuffer(staging_index.buffer());
+    info.setDstBuffer(index_buffer_->buffer());
+    cmd.copyBuffer2(&info);
+  });
 }
 
 void Renderer3D::compile()
