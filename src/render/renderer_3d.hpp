@@ -39,13 +39,18 @@ private:
 
   std::vector<vk::UniqueSampler> samplers_;
   std::vector<Material> materials_;
+  bool upload_materials_ = false;
 
   std::optional<Buffer> vertex_buffer_;
   std::optional<Buffer> index_buffer_;
 
+  std::optional<Buffer> material_buffer_;
+
   void compile();
 
   void imgui_pass(vk::CommandBuffer cmd) const;
+
+  void upload_materials();
 
   static uint32_t pack_texture_index(const MaterialInfo::Textures::Texture& texture);
 };

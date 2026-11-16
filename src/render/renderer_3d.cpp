@@ -13,6 +13,11 @@ void Renderer3D::render(RenderInfo info)
     return;
   }
 
+  if (upload_materials_) {
+    upload_materials();
+    upload_materials_ = false;
+  }
+
   if (should_compile_) compile();
 
   execute_frame();
@@ -102,6 +107,7 @@ GPUMaterial Renderer3D::create_material(const MaterialInfo& material)
                           pack_texture_index(material.textures.metal_roughness),
                           pack_texture_index(material.textures.normal), pack_texture_index(material.textures.occlusion),
                           pack_texture_index(material.textures.emissive));
+  upload_materials_ = true;
   return {id};
 }
 
@@ -176,6 +182,38 @@ void Renderer3D::compile()
 void Renderer3D::imgui_pass(vk::CommandBuffer cmd) const
 {
   ImGui_ImplVulkan_RenderDrawData(info_.imgui_draw_data, cmd);
+}
+
+void Renderer3D::upload_materials()
+{
+  device_.get().waitIdle(); // bit blunt, could queue these uploads instead and handle the sync in next frame.
+
+  const auto material_size = materials_.size() * sizeof(Material);
+  const Buffer staging{device_.get_allocator(), device_.get(),
+                       BufferDesc{.size = material_size,
+                                  .usage = vk::BufferUsageFlagBits::eTransferSrc,
+                                  .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                                  .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                                 VMA_ALLOCATION_CREATE_MAPPED_BIT}};
+  std::memcpy(staging.get_mapped_data(), materials_.data(), material_size);
+
+  material_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{.size = material_size,
+                 .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
+                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                 .debug_name = "Material buffer"});
+
+  immediate_.submit([&](vk::CommandBuffer cmd) {
+    vk::BufferCopy2 region{};
+    region.setSize(material_size);
+
+    vk::CopyBufferInfo2 info{};
+    info.setSrcBuffer(staging.buffer());
+    info.setDstBuffer(material_buffer_->buffer());
+    info.setRegions(region);
+    cmd.copyBuffer2(&info);
+  });
 }
 
 uint32_t Renderer3D::pack_texture_index(const MaterialInfo::Textures::Texture& texture)
