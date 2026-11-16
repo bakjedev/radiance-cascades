@@ -6,7 +6,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
 Renderer3D::~Renderer3D() { device_.get().waitIdle(); }
 
-void Renderer3D::render([[maybe_unused]] RenderInfo info)
+void Renderer3D::render(RenderInfo info)
 {
   info_ = std::move(info);
   if (!begin_frame({info_.window_size.first, info_.window_size.second})) {
@@ -19,12 +19,78 @@ void Renderer3D::render([[maybe_unused]] RenderInfo info)
   end_frame();
 }
 
-GPUSampler Renderer3D::create_sampler([[maybe_unused]] Filter min_filter, [[maybe_unused]] Filter mag_filter,
-                                      [[maybe_unused]] Wrap wrap_s, [[maybe_unused]] Wrap wrap_t)
+GPUSampler Renderer3D::create_sampler(const Filter min_filter, const Filter mag_filter, const Wrap wrap_s,
+                                      const Wrap wrap_t)
 {
-  // WIP
   const auto id = static_cast<uint32_t>(samplers_.size());
-  samplers_.emplace_back();
+  auto& sampler = samplers_.emplace_back();
+
+  // little bit of duplicated code incoming
+
+  vk::SamplerCreateInfo create_info{};
+  switch (min_filter) {
+    case Filter::Nearest:
+      create_info.setMinFilter(vk::Filter::eNearest);
+      break;
+    case Filter::Linear:
+      create_info.setMinFilter(vk::Filter::eLinear);
+      break;
+    case Filter::NearestMipMapNearest:
+      create_info.setMinFilter(vk::Filter::eNearest);
+      create_info.setMipmapMode(vk::SamplerMipmapMode::eNearest);
+      break;
+    case Filter::LinearMipMapNearest:
+      create_info.setMinFilter(vk::Filter::eLinear);
+      create_info.setMipmapMode(vk::SamplerMipmapMode::eNearest);
+      break;
+    case Filter::NearestMipMapLinear:
+      create_info.setMinFilter(vk::Filter::eNearest);
+      create_info.setMipmapMode(vk::SamplerMipmapMode::eLinear);
+      break;
+    case Filter::LinearMipMapLinear:
+      create_info.setMinFilter(vk::Filter::eLinear);
+      create_info.setMipmapMode(vk::SamplerMipmapMode::eLinear);
+      break;
+  }
+
+  switch (mag_filter) {
+    case Filter::Nearest:
+    case Filter::NearestMipMapNearest:
+    case Filter::NearestMipMapLinear:
+      create_info.setMagFilter(vk::Filter::eNearest);
+      break;
+    case Filter::Linear:
+    case Filter::LinearMipMapNearest:
+    case Filter::LinearMipMapLinear:
+      create_info.setMagFilter(vk::Filter::eLinear);
+      break;
+  }
+
+  switch (wrap_s) {
+    case Wrap::ClampToEdge:
+      create_info.setAddressModeU(vk::SamplerAddressMode::eClampToEdge);
+      break;
+    case Wrap::MirroredRepeat:
+      create_info.setAddressModeU(vk::SamplerAddressMode::eMirroredRepeat);
+      break;
+    case Wrap::Repeat:
+      create_info.setAddressModeU(vk::SamplerAddressMode::eRepeat);
+      break;
+  }
+
+  switch (wrap_t) {
+    case Wrap::ClampToEdge:
+      create_info.setAddressModeV(vk::SamplerAddressMode::eClampToEdge);
+      break;
+    case Wrap::MirroredRepeat:
+      create_info.setAddressModeV(vk::SamplerAddressMode::eMirroredRepeat);
+      break;
+    case Wrap::Repeat:
+      create_info.setAddressModeV(vk::SamplerAddressMode::eRepeat);
+      break;
+  }
+
+  sampler = device_.get().createSamplerUnique(create_info);
   return {id};
 }
 
