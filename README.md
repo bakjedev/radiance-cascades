@@ -1,5 +1,7 @@
 # Radiance Cascades
 
+This is the 2D branch, created right before my start of the 3D work.
+
 ## Prerequisites
 
 - Vulkan SDK >= 1.3
