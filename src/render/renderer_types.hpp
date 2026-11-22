@@ -55,6 +55,7 @@ struct MaterialInfo {
     struct Texture {
       uint32_t index;
       uint32_t tex_coord;
+      uint32_t sampler;
     } albedo, metal_roughness, normal, occlusion, emissive;
   } textures;
 };

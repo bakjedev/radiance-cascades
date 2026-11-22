@@ -191,14 +191,17 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   }
 
   // ----------------------------------------
-  // Sampler
+  // Samplers
   // ----------------------------------------
   vk::SamplerCreateInfo sampler_info{};
+  sampler_ = device_.get().createSamplerUnique(sampler_info);
+
   sampler_info.setAddressModeU(vk::SamplerAddressMode::eClampToBorder);
   sampler_info.setAddressModeV(vk::SamplerAddressMode::eClampToBorder);
   sampler_info.setMinFilter(vk::Filter::eLinear);
   sampler_info.setMagFilter(vk::Filter::eLinear);
   cascades_sampler_ = device_.get().createSamplerUnique(sampler_info);
+
 
   DescriptorWriter{}
       .add_buffer(1, MaterialBuffer, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())

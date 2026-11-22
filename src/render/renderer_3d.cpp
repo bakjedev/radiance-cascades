@@ -23,7 +23,6 @@ namespace {
   };
 
   enum SamplerDescriptors {
-    DefaultSampler = 0,
     TextureSamplers,
   };
 } // namespace
@@ -110,7 +109,6 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
   DescriptorWriter{}
       .add_buffer(1, GeometriesBuffer, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer())
-      .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .update(device_.get(), bindless_descriptor_set_);
 }
 
@@ -510,6 +508,10 @@ void Renderer3D::update_descriptors()
 
 uint32_t Renderer3D::pack_texture_index(const MaterialInfo::Textures::Texture& texture)
 {
-  assert((texture.index < MaterialTextureMask || texture.index == UINT32_MAX) && texture.tex_coord < 256);
-  return pack_material_texture(texture.index == UINT32_MAX ? MaterialTextureMask : texture.index, texture.tex_coord);
+  if (texture.index == UINT32_MAX) return UINT32_MAX;
+
+  assert(texture.index < MaterialTextureMask);
+  assert(texture.tex_coord <= 1);
+  assert(texture.sampler <= MaterialSamplerMask);
+  return pack_material_texture(texture.index, texture.tex_coord, texture.sampler);
 }

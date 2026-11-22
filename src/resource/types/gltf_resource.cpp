@@ -145,28 +145,33 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
     if (const auto& tex = material.pbrData.baseColorTexture; tex.has_value()) {
       mat_info.textures.albedo.index = static_cast<uint32_t>(tex->textureIndex);
       mat_info.textures.albedo.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
+      mat_info.textures.albedo.sampler = result.textures[tex->textureIndex].second.id;
     }
 
     if (const auto& tex = material.pbrData.metallicRoughnessTexture; tex.has_value()) {
       mat_info.textures.metal_roughness.index = static_cast<uint32_t>(tex->textureIndex);
       mat_info.textures.metal_roughness.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
+      mat_info.textures.metal_roughness.sampler = result.textures[tex->textureIndex].second.id;
     }
 
     if (const auto& tex = material.normalTexture; tex.has_value()) {
       mat_info.normal_scale = tex->scale;
       mat_info.textures.normal.index = static_cast<uint32_t>(tex->textureIndex);
       mat_info.textures.normal.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
+      mat_info.textures.normal.sampler = result.textures[tex->textureIndex].second.id;
     }
 
     if (const auto& tex = material.occlusionTexture; tex.has_value()) {
       mat_info.occlusion_scale = tex->strength;
       mat_info.textures.occlusion.index = static_cast<uint32_t>(tex->textureIndex);
       mat_info.textures.occlusion.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
+      mat_info.textures.occlusion.sampler = result.textures[tex->textureIndex].second.id;
     }
 
     if (const auto& tex = material.emissiveTexture; tex.has_value()) {
       mat_info.textures.emissive.index = static_cast<uint32_t>(tex->textureIndex);
       mat_info.textures.emissive.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
+      mat_info.textures.emissive.sampler = result.textures[tex->textureIndex].second.id;
     }
 
     result.materials.push_back(renderer->create_material(mat_info));

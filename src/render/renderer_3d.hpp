@@ -18,11 +18,16 @@ public:
 private:
   static constexpr uint32_t max_geometries = 1 << 16;
 
-  static constexpr uint32_t MaterialTextureBits = 24;
+  static constexpr uint32_t MaterialTextureBits = 23;
   static constexpr uint32_t MaterialTextureMask = (1u << MaterialTextureBits) - 1;
-  static constexpr uint32_t pack_material_texture(const uint32_t index, const uint32_t tex_coord)
+  static constexpr uint32_t MaterialSamplerShift = MaterialTextureBits + 1;
+  static constexpr uint32_t MaterialSamplerMask = 0xFFu;
+
+  static constexpr uint32_t pack_material_texture(const uint32_t index, const uint32_t tex_coord,
+                                                  const uint32_t sampler)
   {
-    return (index & MaterialTextureMask) | (tex_coord << MaterialTextureBits);
+    return (index & MaterialTextureMask) | ((tex_coord & 1u) << MaterialTextureBits) |
+           ((sampler & MaterialSamplerMask) << MaterialSamplerShift);
   }
 
   struct Material {

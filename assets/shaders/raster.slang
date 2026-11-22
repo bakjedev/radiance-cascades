@@ -86,23 +86,21 @@ struct Material {
 [[vk::binding(2, 0)]] Texture2D textures[];
 [[vk::binding(3, 0)]] SamplerState samplers[];
 
-static const uint MaterialTextureBits = 24u;
+static const uint MaterialTextureBits = 23u;
 static const uint MaterialTextureMask = (1u << MaterialTextureBits) - 1u;
+static const uint MaterialSamplerShift  = MaterialTextureBits + 1u;
 
-void unpack_texture_id(uint packed, out uint index, out uint tex_coord) {
-    index = packed & MaterialTextureMask;
-    tex_coord = packed >> MaterialTextureBits;
-}
+struct Texture {
+    uint index;
+    uint uv;
+    uint sampler;
+};
 
-bool try_get_texture(uint texture, out uint index, out uint tex_coord) {
-    if (texture == 0xFFFFFFFFu) {
-        index = 0u;
-        tex_coord = 0u;
-        return false;
-    }
-
-    unpack_texture_id(texture, index, tex_coord);
-    return true;
+bool try_get_texture(uint packed, out Texture texture) {
+  texture.index = packed & MaterialTextureMask;
+  texture.uv = (packed >> MaterialTextureBits) & 1u;
+  texture.sampler = packed >> MaterialSamplerShift;
+  return texture.index != MaterialTextureMask;
 }
 
 float2 signNotZero(float2 v) {
@@ -123,11 +121,11 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     Material material = storageBuffersMaterial[pc.materials_id][input.material];
 
     float4 albedo = material.base_color;
-    uint albedo_idx, albedo_uv;
-    if (try_get_texture(material.albedo_tex, albedo_idx, albedo_uv))
+    Texture albedo_tex;
+    if (try_get_texture(material.albedo_tex, albedo_tex))
     {
-        float2 uv = albedo_uv == 0 ? input.uv : input.uv1;
-        albedo *= textures[NonUniformResourceIndex(albedo_idx)].Sample(samplers[0], uv);
+        float2 uv = albedo_tex.uv == 0 ? input.uv : input.uv1;
+        albedo *= textures[NonUniformResourceIndex(albedo_tex.index)].Sample(samplers[albedo_tex.sampler], uv);
     }
 
     out.color = albedo;
@@ -137,11 +135,11 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     float3 B = cross(N, T) * input.tangent.w;
 
     float3 normal;
-    uint normal_idx, normal_uv;
-    if (try_get_texture(material.normal_tex, normal_idx, normal_uv))
+    Texture normal_tex;
+    if (try_get_texture(material.normal_tex, normal_tex))
     {
-        float2 uv = normal_uv == 0 ? input.uv : input.uv1;
-        normal = textures[NonUniformResourceIndex(normal_idx)].Sample(samplers[0], uv).xyz;
+        float2 uv = normal_tex.uv == 0 ? input.uv : input.uv1;
+        normal = textures[NonUniformResourceIndex(normal_tex.index)].Sample(samplers[normal_tex.sampler], uv).xyz;
     }
     normal *= 2.0 - 1.0;
     normal.xy *= material.normal_scale;
@@ -150,29 +148,29 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     out.normal = octEncode(normal_ws);
 
     float2 metal_roughness;
-    uint metal_rough_idx, metal_rough_uv;
-    if (try_get_texture(material.metal_roughness_tex, metal_rough_idx, metal_rough_uv))
+    Texture metal_rough_tex;
+    if (try_get_texture(material.metal_roughness_tex, metal_rough_tex))
     {
-        float2 uv = metal_rough_uv == 0 ? input.uv : input.uv1;
-        metal_roughness = textures[NonUniformResourceIndex(metal_rough_idx)].Sample(samplers[0], uv).bg;
+        float2 uv = metal_rough_tex.uv == 0 ? input.uv : input.uv1;
+        metal_roughness = textures[NonUniformResourceIndex(metal_rough_tex.index)].Sample(samplers[metal_rough_tex.sampler], uv).bg;
     }
 
     float occlusion;
-    uint occlusion_idx, occlusion_uv;
-    if (try_get_texture(material.occlusion_tex, occlusion_idx, occlusion_uv))
+    Texture occlusion_tex;
+    if (try_get_texture(material.occlusion_tex, occlusion_tex))
     {
-        float2 uv = occlusion_uv == 0 ? input.uv : input.uv1;
-        occlusion = textures[NonUniformResourceIndex(occlusion_idx)].Sample(samplers[0], uv).r;
+        float2 uv = occlusion_tex.uv == 0 ? input.uv : input.uv1;
+        occlusion = textures[NonUniformResourceIndex(occlusion_tex.index)].Sample(samplers[occlusion_tex.sampler], uv).r;
     }
 
     out.pbr = float4(metal_roughness, occlusion, 1.0);
 
     float3 emissive;
-    uint emissive_idx, emissive_uv;
-    if (try_get_texture(material.emissive_tex, emissive_idx, emissive_uv))
+    Texture emissive_tex;
+    if (try_get_texture(material.emissive_tex, emissive_tex))
     {
-        float2 uv = emissive_uv == 0 ? input.uv : input.uv1;
-        emissive = textures[NonUniformResourceIndex(emissive_idx)].Sample(samplers[0], uv).rgb;
+        float2 uv = emissive_tex.uv == 0 ? input.uv : input.uv1;
+        emissive = textures[NonUniformResourceIndex(emissive_tex.index)].Sample(samplers[emissive_tex.sampler], uv).rgb;
     }
     emissive *= material.emissive_color;
 

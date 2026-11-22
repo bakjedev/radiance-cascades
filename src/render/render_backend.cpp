@@ -19,9 +19,6 @@ RenderBackend::RenderBackend(const RendererCreateInfo& create_info) :
     semaphore = device_.get().createSemaphoreUnique(semaphore_create_info);
   }
 
-  constexpr vk::SamplerCreateInfo sampler_info{};
-  sampler_ = device_.get().createSamplerUnique(sampler_info);
-
   // ----------------------------------------
   // Descriptors
   // ----------------------------------------

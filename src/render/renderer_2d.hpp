@@ -135,6 +135,7 @@ private:
   vk::UniqueShaderModule blit_shader_module_;
   vk::UniquePipeline blit_pipeline_;
 
+  vk::UniqueSampler sampler_;
   vk::UniqueSampler cascades_sampler_;
 
   std::optional<Image> draw_image_;

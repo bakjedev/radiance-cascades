@@ -41,8 +41,6 @@ protected:
   vk::UniqueDescriptorSetLayout bindless_descriptor_set_layout_;
   vk::DescriptorSet bindless_descriptor_set_;
 
-  vk::UniqueSampler sampler_;
-
 private:
   std::vector<fwrk::ResourceID> swapchain_imports_;
   uint32_t image_index_{};
