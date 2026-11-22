@@ -69,11 +69,25 @@ private:
   vk::UniqueShaderModule raster_shader_module_;
   vk::UniquePipeline raster_pipeline_;
 
+  vk::UniquePipelineLayout composite_pipeline_layout_;
+  vk::UniqueShaderModule composite_shader_module_;
+  vk::UniquePipeline composite_pipeline_;
+
+  vk::UniquePipelineLayout blit_pipeline_layout_;
+  vk::UniqueShaderModule blit_shader_module_;
+  vk::UniquePipeline blit_pipeline_;
+
   std::optional<Image> albedo_image_;
   std::optional<Image> normal_image_;
   std::optional<Image> pbr_image_;
   std::optional<Image> emissive_image_;
   std::optional<Image> depth_image_;
+
+  vk::UniqueImageView albedo_view_;
+  vk::UniqueImageView normal_view_;
+  vk::UniqueImageView pbr_view_;
+  vk::UniqueImageView emissive_view_;
+  vk::UniqueImageView depth_view_;
 
   fwrk::ResourceID albedo_id_;
   fwrk::ResourceID normal_id_;
@@ -81,12 +95,18 @@ private:
   fwrk::ResourceID emissive_id_;
   fwrk::ResourceID depth_id_;
 
+  std::optional<Image> composite_image_;
+  vk::UniqueImageView composite_view_;
+  fwrk::ResourceID composite_id_;
+
   uint32_t geometry_count_ = 0;
 
   void compile();
 
   void imgui_pass(vk::CommandBuffer cmd) const;
   void raster_pass(vk::CommandBuffer cmd) const;
+  void composite_pass(vk::CommandBuffer cmd) const;
+  void blit_pass(vk::CommandBuffer cmd) const;
 
   void upload_geometry();
 

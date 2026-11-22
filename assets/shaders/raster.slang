@@ -125,7 +125,7 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     if (try_get_texture(material.albedo_tex, albedo_tex))
     {
         float2 uv = albedo_tex.uv == 0 ? input.uv : input.uv1;
-        albedo *= textures[NonUniformResourceIndex(albedo_tex.index)].Sample(samplers[albedo_tex.sampler], uv);
+        albedo *= textures[NonUniformResourceIndex(pc.textures_id + albedo_tex.index)].Sample(samplers[pc.samplers_id + albedo_tex.sampler], uv);
     }
 
     out.color = albedo;
@@ -139,7 +139,7 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     if (try_get_texture(material.normal_tex, normal_tex))
     {
         float2 uv = normal_tex.uv == 0 ? input.uv : input.uv1;
-        normal = textures[NonUniformResourceIndex(normal_tex.index)].Sample(samplers[normal_tex.sampler], uv).xyz;
+        normal = textures[NonUniformResourceIndex(pc.textures_id + normal_tex.index)].Sample(samplers[pc.samplers_id + normal_tex.sampler], uv).xyz;
     }
     normal *= 2.0 - 1.0;
     normal.xy *= material.normal_scale;
@@ -152,7 +152,7 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     if (try_get_texture(material.metal_roughness_tex, metal_rough_tex))
     {
         float2 uv = metal_rough_tex.uv == 0 ? input.uv : input.uv1;
-        metal_roughness = textures[NonUniformResourceIndex(metal_rough_tex.index)].Sample(samplers[metal_rough_tex.sampler], uv).bg;
+        metal_roughness = textures[NonUniformResourceIndex(pc.textures_id + metal_rough_tex.index)].Sample(samplers[pc.samplers_id + metal_rough_tex.sampler], uv).bg;
     }
 
     float occlusion;
@@ -160,7 +160,7 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     if (try_get_texture(material.occlusion_tex, occlusion_tex))
     {
         float2 uv = occlusion_tex.uv == 0 ? input.uv : input.uv1;
-        occlusion = textures[NonUniformResourceIndex(occlusion_tex.index)].Sample(samplers[occlusion_tex.sampler], uv).r;
+        occlusion = textures[NonUniformResourceIndex(pc.textures_id + occlusion_tex.index)].Sample(samplers[pc.samplers_id + occlusion_tex.sampler], uv).r;
     }
 
     out.pbr = float4(metal_roughness, occlusion, 1.0);
@@ -170,7 +170,7 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     if (try_get_texture(material.emissive_tex, emissive_tex))
     {
         float2 uv = emissive_tex.uv == 0 ? input.uv : input.uv1;
-        emissive = textures[NonUniformResourceIndex(emissive_tex.index)].Sample(samplers[emissive_tex.sampler], uv).rgb;
+        emissive = textures[NonUniformResourceIndex(pc.textures_id + emissive_tex.index)].Sample(samplers[pc.samplers_id + emissive_tex.sampler], uv).rgb;
     }
     emissive *= material.emissive_color;
 

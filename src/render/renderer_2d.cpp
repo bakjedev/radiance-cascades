@@ -191,11 +191,9 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   }
 
   // ----------------------------------------
-  // Samplers
+  // Sampler
   // ----------------------------------------
   vk::SamplerCreateInfo sampler_info{};
-  sampler_ = device_.get().createSamplerUnique(sampler_info);
-
   sampler_info.setAddressModeU(vk::SamplerAddressMode::eClampToBorder);
   sampler_info.setAddressModeV(vk::SamplerAddressMode::eClampToBorder);
   sampler_info.setMinFilter(vk::Filter::eLinear);

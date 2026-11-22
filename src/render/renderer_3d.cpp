@@ -13,8 +13,28 @@ namespace {
     uint32_t samplers_id;
   };
 
+  struct CompositePushConstant {
+    uint32_t composite_id;
+    uint32_t albedo_id;
+    uint32_t normal_id;
+    uint32_t pbr_id;
+    uint32_t emissive_id;
+    uint32_t depth_id;
+  };
+
+  struct BlitPushConstant {
+    uint32_t composite_id;
+    bool aces;
+  };
+
   enum TextureDescriptors {
-    Textures = 0,
+    AlbedoTexture = 0,
+    NormalTexture,
+    PBRTexture,
+    EmissiveTexture,
+    DepthTexture,
+    CompositeTexture,
+    Textures,
   };
 
   enum BufferDescriptors {
@@ -23,7 +43,12 @@ namespace {
   };
 
   enum SamplerDescriptors {
+    DefaultSampler = 0,
     TextureSamplers,
+  };
+
+  enum ImageDescriptors {
+    CompositeImage = 0,
   };
 } // namespace
 
@@ -99,6 +124,50 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
                                     "Sprite Pipeline");
   }
 
+  {
+    vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
+
+    const auto composite_shader = create_info.load_shader("composite3d.slang.spv");
+    composite_shader_module_ = create_shader_module(device_.get(), composite_shader);
+
+    composite_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&composite_push, 1});
+
+    const ComputePipelineDesc composite_pipeline_desc{.module = composite_shader_module_.get(),
+                                                      .layout = composite_pipeline_layout_.get()};
+
+    composite_pipeline_ = create_compute_pipeline(device_.get(), composite_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(composite_pipeline_.get()),
+                                    "Composite Pipeline");
+  }
+
+  {
+    vk::PushConstantRange blit_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant)};
+
+    const auto blit_shader = create_info.load_shader("blit.slang.spv");
+    blit_shader_module_ = create_shader_module(device_.get(), blit_shader);
+
+    blit_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&blit_push, 1});
+
+    GraphicsPipelineDesc blit_pipeline_desc{};
+    blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, blit_shader_module_.get(), "vs_main");
+    blit_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eFragment, blit_shader_module_.get(), "fs_main");
+
+    blit_pipeline_desc.depth_stencil.depthTestEnable = vk::False;
+    blit_pipeline_desc.depth_stencil.depthWriteEnable = vk::False;
+
+    blit_pipeline_desc.add_attachment(swapchain_.format());
+
+    blit_pipeline_desc.layout = blit_pipeline_layout_.get();
+
+    blit_pipeline_ = create_graphics_pipeline(device_.get(), blit_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(blit_pipeline_.get()),
+                                    "Blit Pipeline");
+  }
+
   for (auto& info: debug_object_names) {
     if (device_.get().setDebugUtilsObjectNameEXT(&info) != vk::Result::eSuccess) {
       throw std::runtime_error("Failed to set object name on pipeline");
@@ -109,6 +178,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
   DescriptorWriter{}
       .add_buffer(1, GeometriesBuffer, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer())
+      .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .update(device_.get(), bindless_descriptor_set_);
 }
 
@@ -299,10 +369,25 @@ void Renderer3D::compile()
           {.resource = {.id = depth_id_}, .load_op = fwrk::LoadOp::Clear, .store_op = fwrk::StoreOp::Store})
       .set_execute([this](vk::CommandBuffer cmd) { raster_pass(cmd); });
 
+  graph.add_compute_pass("Composite")
+      .set_image_read({.resource = {.id = albedo_id_}})
+      .set_image_read({.resource = {.id = normal_id_}})
+      .set_image_read({.resource = {.id = pbr_id_}})
+      .set_image_read({.resource = {.id = emissive_id_}})
+      .set_image_read({.resource = {.id = depth_id_}})
+      .set_storage_image_write({.resource = {.id = composite_id_}})
+      .set_execute([this](vk::CommandBuffer cmd) { composite_pass(cmd); });
+
+  graph.add_graphics_pass("Blit")
+      .set_image_read({.resource = {.id = composite_id_}})
+      .set_color_attachment(
+          {.resource = {.id = swapchain_proxy_}, .load_op = fwrk::LoadOp::DontCare, .store_op = fwrk::StoreOp::Store})
+      .set_execute([this](vk::CommandBuffer cmd) { blit_pass(cmd); });
+
   graph.add_graphics_pass("ImGui")
       .set_color_attachment({
           .resource = {.id = swapchain_proxy_},
-          .load_op = fwrk::LoadOp::Clear,
+          .load_op = fwrk::LoadOp::Load,
           .store_op = fwrk::StoreOp::Store,
       })
       .set_execute([this](vk::CommandBuffer cmd) { imgui_pass(cmd); });
@@ -351,6 +436,51 @@ void Renderer3D::raster_pass(vk::CommandBuffer cmd) const
   constexpr auto stride = sizeof(vk::DrawIndexedIndirectCommand);
   cmd.drawIndexedIndirect(indirect_buffer_->buffer(), stride * max_geometries * current_frame_, geometry_count_,
                           stride);
+}
+
+void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
+{
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout_.get(), 0, 1,
+                         &bindless_descriptor_set_, 0, nullptr);
+
+  constexpr CompositePushConstant push_constant{.composite_id = CompositeImage,
+                                                .albedo_id = AlbedoTexture,
+                                                .normal_id = NormalTexture,
+                                                .pbr_id = PBRTexture,
+                                                .emissive_id = EmissiveTexture,
+                                                .depth_id = DepthTexture};
+
+  cmd.pushConstants(composite_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
+                    sizeof(CompositePushConstant), &push_constant);
+
+  const uint32_t gx = (info_.window_size.first + 7) / 8;
+  const uint32_t gy = (info_.window_size.second + 7) / 8;
+  cmd.dispatch(gx, gy, 1);
+}
+
+void Renderer3D::blit_pass(vk::CommandBuffer cmd) const
+{
+  cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, blit_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blit_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
+                         0, nullptr);
+
+  const vk::Viewport viewport{0, 0, static_cast<float>(info_.window_size.first),
+                              static_cast<float>(info_.window_size.second)};
+  cmd.setViewport(0, 1, &viewport);
+
+  const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{info_.window_size.first, info_.window_size.second}};
+  cmd.setScissor(0, 1, &scissor);
+
+  constexpr BlitPushConstant push_constant{
+      .composite_id = CompositeTexture,
+      .aces = true,
+  };
+
+  cmd.pushConstants(blit_pipeline_layout_.get(), vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant),
+                    &push_constant);
+
+  cmd.draw(3, 1, 0, 0);
 }
 
 void Renderer3D::upload_geometry()
@@ -447,6 +577,20 @@ void Renderer3D::create_render_targets(const vk::Extent2D extent)
                 .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
                 .debug_name = "Depth image"});
 
+  composite_image_.emplace(device_.get_allocator(), device_.get(),
+                           ImageDesc{.format = vk::Format::eR16G16B16A16Sfloat,
+                                     .extent = {extent.width, extent.height, 1},
+                                     .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+                                     .debug_name = "Composite image"});
+
+  albedo_view_ = albedo_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  normal_view_ = normal_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  pbr_view_ = pbr_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  emissive_view_ = emissive_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+  depth_view_ = depth_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eDepth);
+
+  composite_view_ = composite_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eColor);
+
   fwrk::ImageImportInfo image_import_info{.type = VK_IMAGE_TYPE_2D,
                                           .size = {.width = extent.width, .height = extent.height, .depth = 1},
                                           .format = VK_FORMAT_R8G8B8A8_SRGB,
@@ -487,11 +631,34 @@ void Renderer3D::create_render_targets(const vk::Extent2D extent)
   } else {
     depth_id_ = context_.import_image(image_import_info, depth_image_->image());
   }
+
+  image_import_info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+  if (composite_id_) {
+    context_.update_image(composite_id_, image_import_info, composite_image_->image());
+  } else {
+    composite_id_ = context_.import_image(image_import_info, composite_image_->image());
+  }
 }
 
 void Renderer3D::update_descriptors()
 {
   DescriptorWriter writer{};
+
+  writer
+      .add_image(0, CompositeImage, vk::DescriptorType::eStorageImage, composite_view_.get(), vk::ImageLayout::eGeneral)
+      .add_image(2, AlbedoTexture, vk::DescriptorType::eSampledImage, albedo_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, NormalTexture, vk::DescriptorType::eSampledImage, normal_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, PBRTexture, vk::DescriptorType::eSampledImage, pbr_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, EmissiveTexture, vk::DescriptorType::eSampledImage, emissive_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, DepthTexture, vk::DescriptorType::eSampledImage, depth_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, CompositeTexture, vk::DescriptorType::eSampledImage, composite_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal);
+
 
   for (uint32_t i = 0; i < texture_images_.size(); i++) {
     writer.add_image(2, Textures + i, vk::DescriptorType::eSampledImage, texture_images_.at(i).second.get(),

@@ -68,7 +68,8 @@ shaders = [
     'blit.slang',
     'blur.slang',
     'imgui.slang',
-    'raster.slang'
+    'raster.slang',
+    'composite3d.slang'
 ]
 
 compiled_shaders = []
