@@ -5,6 +5,7 @@
 #include "render/active_renderer.hpp"
 #include "render/renderer_fwd.hpp"
 #include "resource/resource_manager.hpp"
+#include "scene.hpp"
 #include "sdl_init.hpp"
 #include "user_interface.hpp"
 #include "window.hpp"
@@ -26,9 +27,11 @@ private:
   ResourceManager resource_manager_;
   UserInterface user_interface_;
   ActiveRenderer renderer_;
+  Scene scene_;
   bool running = true;
 
   void poll_events();
 
   ActiveRenderer create_renderer();
+  Scene create_scene();
 };

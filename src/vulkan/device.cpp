@@ -38,34 +38,31 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
     return false;
   }
 
-  const auto features =
-      device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDevice8BitStorageFeatures,
-                          vk::PhysicalDeviceShaderFloat16Int8Features, vk::PhysicalDeviceVulkan13Features,
-                          vk::PhysicalDeviceDescriptorIndexingFeatures>();
+  const auto features = device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+                                            vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>();
 
   if (!features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering ||
       !features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) {
     return false;
   }
 
-  if (!features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingPartiallyBound ||
-      !features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingStorageBufferUpdateAfterBind ||
-      !features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().shaderStorageImageArrayNonUniformIndexing ||
-      !features.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().runtimeDescriptorArray) {
+  if (!features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters) {
+    return false;
+  }
+
+  if (!features.get<vk::PhysicalDeviceVulkan12Features>().shaderSampledImageArrayNonUniformIndexing ||
+      !features.get<vk::PhysicalDeviceVulkan12Features>().storagePushConstant8 ||
+      !features.get<vk::PhysicalDeviceVulkan12Features>().shaderInt8 ||
+      !features.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingPartiallyBound ||
+      !features.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingStorageBufferUpdateAfterBind ||
+      !features.get<vk::PhysicalDeviceVulkan12Features>().shaderStorageImageArrayNonUniformIndexing ||
+      !features.get<vk::PhysicalDeviceVulkan12Features>().runtimeDescriptorArray) {
     return false;
   }
 
   if (!features.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageReadWithoutFormat ||
       !features.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat ||
       !features.get<vk::PhysicalDeviceFeatures2>().features.wideLines) {
-    return false;
-  }
-
-  if (!features.get<vk::PhysicalDevice8BitStorageFeatures>().storagePushConstant8) {
-    return false;
-  }
-
-  if (!features.get<vk::PhysicalDeviceShaderFloat16Int8Features>().shaderInt8) {
     return false;
   }
 
@@ -118,28 +115,26 @@ void Device::create_device()
 
   const std::vector device_extensions = {vk::KHRSwapchainExtensionName};
 
-  vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDevice8BitStorageFeatures,
-                     vk::PhysicalDeviceShaderFloat16Int8Features, vk::PhysicalDeviceVulkan13Features,
-                     vk::PhysicalDeviceDescriptorIndexingFeatures>
+  vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+                     vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>
       feature_chain;
 
   feature_chain.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = vk::True;
   feature_chain.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = vk::True;
 
-  feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingPartiallyBound = vk::True;
-  feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().descriptorBindingStorageBufferUpdateAfterBind =
-      vk::True;
-  feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().runtimeDescriptorArray = vk::True;
-  feature_chain.get<vk::PhysicalDeviceDescriptorIndexingFeatures>().shaderStorageImageArrayNonUniformIndexing =
-      vk::True;
+  feature_chain.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = vk::True;
+
+  feature_chain.get<vk::PhysicalDeviceVulkan12Features>().shaderSampledImageArrayNonUniformIndexing = vk::True;
+  feature_chain.get<vk::PhysicalDeviceVulkan12Features>().storagePushConstant8 = vk::True;
+  feature_chain.get<vk::PhysicalDeviceVulkan12Features>().shaderInt8 = vk::True;
+  feature_chain.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingPartiallyBound = vk::True;
+  feature_chain.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingStorageBufferUpdateAfterBind = vk::True;
+  feature_chain.get<vk::PhysicalDeviceVulkan12Features>().runtimeDescriptorArray = vk::True;
+  feature_chain.get<vk::PhysicalDeviceVulkan12Features>().shaderStorageImageArrayNonUniformIndexing = vk::True;
 
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageReadWithoutFormat = vk::True;
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat = vk::True;
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.wideLines = vk::True;
-
-  feature_chain.get<vk::PhysicalDevice8BitStorageFeatures>().storagePushConstant8 = vk::True;
-
-  feature_chain.get<vk::PhysicalDeviceShaderFloat16Int8Features>().shaderInt8 = vk::True;
 
   vk::DeviceCreateInfo create_info{};
   create_info.setPNext(&feature_chain.get<vk::PhysicalDeviceFeatures2>());

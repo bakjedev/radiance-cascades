@@ -23,7 +23,7 @@ public:
   void request_recompile();
   static void imgui_new_frame();
 
-  GPUImage create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size);
+  GPUImage create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size, bool srgb = false);
 
 protected:
   Instance instance_;
@@ -46,9 +46,10 @@ protected:
 private:
   std::vector<fwrk::ResourceID> swapchain_imports_;
   uint32_t image_index_{};
-  bool needs_recreate_ = false;
 
 protected:
+  bool needs_recreate_ = false;
+
   fwrk::ResourceID swapchain_proxy_;
 
   uint32_t current_frame_{};

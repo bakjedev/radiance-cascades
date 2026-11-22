@@ -175,12 +175,13 @@ void RenderBackend::request_recompile() { should_compile_ = true; }
 
 void RenderBackend::imgui_new_frame() { ImGui_ImplVulkan_NewFrame(); }
 
-GPUImage RenderBackend::create_texture(std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size)
+GPUImage RenderBackend::create_texture(const std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size,
+                                       const bool srgb)
 {
   auto image = Image(device_.get_allocator(), device_.get(),
                      ImageDesc{}
                          .set_extent(size.first, size.second)
-                         .set_format(vk::Format::eR8G8B8A8Srgb)
+                         .set_format(srgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm)
                          .set_usage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst)
                          .set_debug_name(std::format("Texture {}", texture_images_.size())));
 

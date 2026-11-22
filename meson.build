@@ -17,6 +17,7 @@ add_project_arguments(compiler.get_supported_arguments(
                       ), language : 'cpp')
 
 add_project_arguments('-DVULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1', language : 'cpp')
+add_project_arguments('-DGLM_FORCE_DEPTH_ZERO_TO_ONE', language : 'cpp')
 
 framework_dep = dependency('framework', default_options : ['default_library=static'])
 
@@ -39,6 +40,7 @@ sources = files(
     'src/window.cpp',
     'src/file_system.cpp',
     'src/input.cpp',
+    'src/scene.cpp',
     'src/resource/types/shader_resource.cpp',
     'src/resource/types/image_resource.cpp',
     'src/resource/types/gltf_resource.cpp',
@@ -65,7 +67,8 @@ shaders = [
     'composite.slang',
     'blit.slang',
     'blur.slang',
-    'imgui.slang'
+    'imgui.slang',
+    'raster.slang'
 ]
 
 compiled_shaders = []

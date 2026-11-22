@@ -4,7 +4,7 @@
 #include "src/render/active_renderer.hpp"
 #include "stb_image.h"
 
-ImageResource ImageResourceLoader::operator()(const std::string& path) const
+ImageResource ImageResourceLoader::operator()(const std::string& path, const ImageColorSpace color_space) const
 {
   const auto full_path = file_system->resolve(path);
   if (!full_path) throw std::runtime_error("Couldn't resolve image resource path");
@@ -15,7 +15,8 @@ ImageResource ImageResourceLoader::operator()(const std::string& path) const
 
   const std::pair size = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
   ImageResource res{
-      .gpu_image = renderer->create_texture(std::vector(data, data + static_cast<size_t>(width * height * 4)), size),
+      .gpu_image = renderer->create_texture(std::vector(data, data + static_cast<size_t>(width * height * 4)), size,
+                                            color_space == ImageColorSpace::sRGB),
       .size = size};
 
   stbi_image_free(data);
@@ -23,7 +24,8 @@ ImageResource ImageResourceLoader::operator()(const std::string& path) const
   return res;
 }
 
-ImageResource ImageResourceLoader::operator()(const std::span<const std::byte> image_data) const
+ImageResource ImageResourceLoader::operator()(const std::span<const std::byte> image_data,
+                                              const ImageColorSpace color_space) const
 {
   int width, height, channels;
   stbi_uc* data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(image_data.data()),
@@ -32,7 +34,8 @@ ImageResource ImageResourceLoader::operator()(const std::span<const std::byte> i
 
   const std::pair size = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
   ImageResource res{
-      .gpu_image = renderer->create_texture(std::vector(data, data + static_cast<size_t>(width * height * 4)), size),
+      .gpu_image = renderer->create_texture(std::vector(data, data + static_cast<size_t>(width * height * 4)), size,
+                                            color_space == ImageColorSpace::sRGB),
       .size = size};
 
   stbi_image_free(data);

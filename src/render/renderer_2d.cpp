@@ -749,7 +749,8 @@ void Renderer2D::cascades_pass(vk::CommandBuffer cmd, const bool first)
           .setSrcStageMask(vk::PipelineStageFlagBits2::eComputeShader)
           .setSrcAccessMask(vk::AccessFlagBits2::eShaderStorageWrite)
           .setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader)
-          .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eShaderStorageRead)
+          .setDstAccessMask(vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eShaderStorageRead |
+                            vk::AccessFlagBits2::eShaderSampledRead)
           .setOldLayout(vk::ImageLayout::eGeneral)
           .setNewLayout(vk::ImageLayout::eGeneral)
           .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
@@ -1154,8 +1155,7 @@ void Renderer2D::update_descriptor()
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, SceneRadianceTexture, vk::DescriptorType::eSampledImage, scene_radiance_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
-      .add_image(2, CascadesTexture, vk::DescriptorType::eSampledImage, cascades_view_.get(),
-                 vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, CascadesTexture, vk::DescriptorType::eSampledImage, cascades_view_.get(), vk::ImageLayout::eGeneral)
       .add_image(2, LightTexture, vk::DescriptorType::eSampledImage, light_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, BlurTexture, vk::DescriptorType::eSampledImage, blur_view_.get(),

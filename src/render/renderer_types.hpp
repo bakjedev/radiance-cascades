@@ -15,6 +15,8 @@ struct RendererCreateInfo {
 struct RenderInfo {
   std::pair<uint32_t, uint32_t> window_size;
   ImDrawData* imgui_draw_data;
+  glm::mat4 view{};
+  glm::mat4 projection{};
 };
 
 struct GPUResource {
@@ -63,4 +65,10 @@ struct Vertex {
   glm::vec2 tex_coord_0;
   glm::vec2 tex_coord_1;
   glm::vec4 tangent;
+};
+
+struct GeometrySubmission {
+  GeometryRange range;
+  GPUMaterial material;
+  glm::mat4 transform;
 };

@@ -31,50 +31,61 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
     throw std::runtime_error("Some error occurred while reading the buffer, parsing the JSON, or validating the data.");
   }
 
-  uint32_t image_index{};
-  for (const auto& image: asset->images) {
-    std::visit(
-        fastgltf::visitor{
-            [&]([[maybe_unused]] const auto& arg) { result.images.emplace_back(); },
-            [&](const fastgltf::sources::URI& uri) {
-              const auto resource = resource_manager->create_from_file<ImageResource>(
-                  std::string(uri.uri->path()), ImageResourceLoader{file_system, renderer});
-              result.images.push_back(resource);
-            },
-            [&](const fastgltf::sources::Array& array) {
-              const auto resource =
-                  resource_manager->load<ImageResource>(std::format("image_{}_{}", full_path.string(), image_index++),
-                                                        ImageResourceLoader{file_system, renderer}, array.bytes);
-              result.images.push_back(resource);
-            },
-            [&](const fastgltf::sources::Vector& vector) {
-              const auto resource =
-                  resource_manager->load<ImageResource>(std::format("image_{}_{}", full_path.string(), image_index++),
-                                                        ImageResourceLoader{file_system, renderer}, vector.bytes);
-              result.images.push_back(resource);
-            },
-            [&](const fastgltf::sources::BufferView& buffer_view) {
-              const auto& view = asset->bufferViews[buffer_view.bufferViewIndex];
-              const auto& buffer = asset->buffers[view.bufferIndex];
-              std::visit(fastgltf::visitor{[&]([[maybe_unused]] const auto& arg) { result.images.emplace_back(); },
-                                           [&](const fastgltf::sources::Array& array) {
-                                             const auto resource = resource_manager->load<ImageResource>(
-                                                 std::format("image_{}_{}", full_path.string(), image_index++),
-                                                 ImageResourceLoader{file_system, renderer},
-                                                 std::span(array.bytes).subspan(view.byteOffset, view.byteLength));
-                                             result.images.push_back(resource);
-                                           },
-                                           [&](const fastgltf::sources::Vector& vector) {
-                                             const auto resource = resource_manager->load<ImageResource>(
-                                                 std::format("image_{}_{}", full_path.string(), image_index++),
-                                                 ImageResourceLoader{file_system, renderer},
-                                                 std::span(vector.bytes).subspan(view.byteOffset, view.byteLength));
-                                             result.images.push_back(resource);
-                                           }},
+  std::vector image_is_srgb(asset->images.size(), false);
+  auto set_srgb = [&](const auto& texture_info) {
+    if (!texture_info) return;
+    if (auto img = asset->textures[texture_info->textureIndex].imageIndex) image_is_srgb[*img] = true;
+  };
+  for (const auto& material: asset->materials) {
+    set_srgb(material.pbrData.baseColorTexture);
+    set_srgb(material.emissiveTexture);
+  }
+
+  for (size_t i = 0; i < asset->images.size(); ++i) {
+    const auto color_space = image_is_srgb[i] ? ImageColorSpace::sRGB : ImageColorSpace::Linear;
+    std::visit(fastgltf::visitor{
+                   [&]([[maybe_unused]] const auto& arg) { result.images.emplace_back(); },
+                   [&](const fastgltf::sources::URI& uri) {
+                     const auto resource = resource_manager->create_from_file<ImageResource>(
+                         std::string(uri.uri->path()), ImageResourceLoader{file_system, renderer}, color_space);
+                     result.images.push_back(resource);
+                   },
+                   [&](const fastgltf::sources::Array& array) {
+                     const auto resource = resource_manager->load<ImageResource>(
+                         std::format("image_{}_{}", full_path.string(), i), ImageResourceLoader{file_system, renderer},
+                         array.bytes, color_space);
+                     result.images.push_back(resource);
+                   },
+                   [&](const fastgltf::sources::Vector& vector) {
+                     const auto resource = resource_manager->load<ImageResource>(
+                         std::format("image_{}_{}", full_path.string(), i), ImageResourceLoader{file_system, renderer},
+                         vector.bytes, color_space);
+                     result.images.push_back(resource);
+                   },
+                   [&](const fastgltf::sources::BufferView& buffer_view) {
+                     const auto& view = asset->bufferViews[buffer_view.bufferViewIndex];
+                     const auto& buffer = asset->buffers[view.bufferIndex];
+                     std::visit(
+                         fastgltf::visitor{
+                             [&]([[maybe_unused]] const auto& arg) { result.images.emplace_back(); },
+                             [&](const fastgltf::sources::Array& array) {
+                               const auto resource = resource_manager->load<ImageResource>(
+                                   std::format("image_{}_{}", full_path.string(), i),
+                                   ImageResourceLoader{file_system, renderer},
+                                   std::span(array.bytes).subspan(view.byteOffset, view.byteLength), color_space);
+                               result.images.push_back(resource);
+                             },
+                             [&](const fastgltf::sources::Vector& vector) {
+                               const auto resource = resource_manager->load<ImageResource>(
+                                   std::format("image_{}_{}", full_path.string(), i),
+                                   ImageResourceLoader{file_system, renderer},
+                                   std::span(vector.bytes).subspan(view.byteOffset, view.byteLength), color_space);
+                               result.images.push_back(resource);
+                             }},
                          buffer.data);
-            },
-        },
-        image.data);
+                   },
+               },
+               asset->images[i].data);
   }
 
   constexpr auto to_filter = [](const fastgltf::Filter filter) {

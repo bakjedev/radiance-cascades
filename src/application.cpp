@@ -1,6 +1,9 @@
 #include "application.hpp"
 #include <SDL3/SDL_vulkan.h>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
 #include <iostream>
+
 #include "resource/types/gltf_resource.hpp"
 #include "resource/types/image_resource.hpp"
 #include "resource/types/shader_resource.hpp"
@@ -9,7 +12,7 @@ struct QuitEvent {};
 
 Application::Application(const uint32_t window_width, const uint32_t window_height) :
     window_(event_dispatcher_, window_width, window_height, "everything.. seems to be in order."),
-    input_(event_dispatcher_), user_interface_(window_.get()), renderer_(create_renderer())
+    input_(event_dispatcher_), user_interface_(window_.get()), renderer_(create_renderer()), scene_(create_scene())
 {
 }
 
@@ -21,11 +24,10 @@ void Application::run()
 
   file_system_.add_route("assets", "../assets");
 
-  // auto texture_resource =
-  //     resource_manager_.create_from_file<ImageResource>("image.png", ImageResourceLoader{&file_system_, &renderer_});
-
-  // auto gltf_resource = resource_manager_.create_from_file<GLTFResource>(
-  //     "DamagedHelmet.glb", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
+#ifndef RENDERER_3D
+  auto texture_resource = resource_manager_.create_from_file<ImageResource>(
+      "image.png", ImageResourceLoader{&file_system_, &renderer_}, ImageColorSpace::sRGB);
+#endif
 
   while (running) {
     input_.begin_frame();
@@ -36,18 +38,42 @@ void Application::run()
       running = false;
     }
 
+    glm::mat4 projection, view;
+#ifdef RENDERER_3D
+    for (const auto& [transform, mesh_id, camera_id]: scene_.entities()) {
+      for (const auto& [range, material]: scene_.resource()->meshes.at(mesh_id).primitives) {
+        renderer_.draw_geometry({range, material, transform});
+      }
+    }
+    if (scene_.active_camera() != UINT32_MAX) {
+      const auto& camera_entity = scene_.entities().at(scene_.active_camera());
+      const auto& camera = scene_.resource()->cameras.at(camera_entity.camera_id);
+      projection = camera.projection;
+      view = camera_entity.transform;
+    } else {
+      projection =
+          glm::perspective(glm::radians(90.0f),
+                           static_cast<float>(window_.width()) / static_cast<float>(window_.height()), 100.0f, 0.1f);
+      // projection[1][1] *= -1.0f;
+      view = glm::lookAt(glm::vec3(0.0f, 5.0f, -5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+#else
     if (input_.mouse_down(MouseButton::Left) && !UserInterface::consuming()) {
       renderer_.plot({input_.mouse_x(), input_.mouse_y()});
     }
 
-    // renderer_.draw_sprite(Renderer2D::Sprite{.texture = texture_resource->gpu_image,
-    //                                          .pos = {100.0f, 500.0f},
-    //                                          .size = {1.0f, 1.0f},
-    //                                          .tint = {1.0f, 1.0f, 1.0f}});
+    renderer_.draw_sprite(Renderer2D::Sprite{.texture = texture_resource->gpu_image,
+                                             .pos = {100.0f, 500.0f},
+                                             .size = {1.0f, 1.0f},
+                                             .tint = {1.0f, 1.0f, 1.0f}});
+#endif
 
     auto* imgui_draw_data = user_interface_.render(renderer_);
 
-    renderer_.render({.window_size = {window_.width(), window_.height()}, .imgui_draw_data = imgui_draw_data});
+    renderer_.render({.window_size = {window_.width(), window_.height()},
+                      .imgui_draw_data = imgui_draw_data,
+                      .view = view,
+                      .projection = projection});
   }
 }
 
@@ -109,4 +135,15 @@ ActiveRenderer Application::create_renderer()
                 resource_manager_.create_from_file<ShaderResource>(name, ShaderResourceLoader{&file_system_});
             return shader_resource->code;
           }});
+}
+
+Scene Application::create_scene()
+{
+#ifdef RENDERER_3D
+  const auto gltf_resource = resource_manager_.create_from_file<GLTFResource>(
+      "DamagedHelmet.glb", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
+  return Scene{gltf_resource};
+#else
+  return Scene{{}};
+#endif
 }
