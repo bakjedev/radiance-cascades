@@ -49,6 +49,11 @@ private:
     GPUMaterial material;
   };
 
+  struct FrameData {
+    glm::mat4 inv_view_proj;
+    glm::vec3 camera_pos;
+  };
+
   RenderInfo info_{};
 
   std::vector<vk::UniqueSampler> samplers_;
@@ -64,6 +69,9 @@ private:
 
   std::optional<Buffer> indirect_buffer_;
   std::optional<Buffer> geometries_buffer_;
+
+  std::optional<Buffer> frame_data_buffer_;
+  FrameData frame_data_{};
 
   vk::UniquePipelineLayout raster_pipeline_layout_;
   vk::UniqueShaderModule raster_shader_module_;
@@ -111,6 +119,8 @@ private:
   void upload_geometry();
 
   void upload_materials();
+
+  void update_frame_data();
 
   void create_render_targets(vk::Extent2D extent);
 

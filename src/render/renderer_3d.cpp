@@ -15,6 +15,7 @@ namespace {
 
   struct CompositePushConstant {
     uint32_t composite_id;
+    uint32_t frame_id;
     uint32_t albedo_id;
     uint32_t normal_id;
     uint32_t pbr_id;
@@ -71,6 +72,17 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
                                                        VMA_ALLOCATION_CREATE_MAPPED_BIT,
                                         .debug_name = "Geometries buffer"});
 
+  const auto ubo_alignment = device_.get_physical().getProperties().limits.minUniformBufferOffsetAlignment;
+  const auto frame_data_size = (sizeof(FrameData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+
+  frame_data_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{}
+          .set_size(frame_data_size * frames_in_flight)
+          .set_usage(vk::BufferUsageFlagBits::eUniformBuffer)
+          .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
+          .set_debug_name("FrameData UBO"));
+
   std::vector<vk::DebugUtilsObjectNameInfoEXT> debug_object_names;
   debug_object_names.reserve(1);
 
@@ -121,7 +133,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
     raster_pipeline_ = create_graphics_pipeline(device_.get(), raster_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(raster_pipeline_.get()),
-                                    "Sprite Pipeline");
+                                    "Raster Pipeline");
   }
 
   {
@@ -179,6 +191,10 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   DescriptorWriter{}
       .add_buffer(1, GeometriesBuffer, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer())
       .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
+      .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, frame_data_buffer_->buffer(), 0, frame_data_size)
+      .add_buffer(4, 1, vk::DescriptorType::eUniformBuffer, frame_data_buffer_->buffer(), frame_data_size,
+                  frame_data_size)
+
       .update(device_.get(), bindless_descriptor_set_);
 }
 
@@ -201,6 +217,8 @@ void Renderer3D::render(RenderInfo info)
   }
 
   upload_geometry();
+
+  update_frame_data();
 
   if (should_compile_) {
     should_compile_ = false;
@@ -444,12 +462,13 @@ void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout_.get(), 0, 1,
                          &bindless_descriptor_set_, 0, nullptr);
 
-  constexpr CompositePushConstant push_constant{.composite_id = CompositeImage,
-                                                .albedo_id = AlbedoTexture,
-                                                .normal_id = NormalTexture,
-                                                .pbr_id = PBRTexture,
-                                                .emissive_id = EmissiveTexture,
-                                                .depth_id = DepthTexture};
+  const CompositePushConstant push_constant{.composite_id = CompositeImage,
+                                            .frame_id = current_frame_,
+                                            .albedo_id = AlbedoTexture,
+                                            .normal_id = NormalTexture,
+                                            .pbr_id = PBRTexture,
+                                            .emissive_id = EmissiveTexture,
+                                            .depth_id = DepthTexture};
 
   cmd.pushConstants(composite_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0,
                     sizeof(CompositePushConstant), &push_constant);
@@ -486,7 +505,7 @@ void Renderer3D::blit_pass(vk::CommandBuffer cmd) const
 void Renderer3D::upload_geometry()
 {
   constexpr auto indirect_region = sizeof(vk::DrawIndexedIndirectCommand) * max_geometries;
-  constexpr auto geometries_region = sizeof(vk::DrawIndexedIndirectCommand) * max_geometries;
+  constexpr auto geometries_region = sizeof(Geometry) * max_geometries;
 
   auto* indirect_mapping = reinterpret_cast<vk::DrawIndexedIndirectCommand*>(
       indirect_buffer_->get_mapped_data<std::byte>() + indirect_region * current_frame_);
@@ -541,6 +560,14 @@ void Renderer3D::upload_materials()
   DescriptorWriter{}
       .add_buffer(1, MaterialBuffer, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
       .update(device_.get(), bindless_descriptor_set_);
+}
+
+void Renderer3D::update_frame_data()
+{
+  frame_data_.inv_view_proj = glm::inverse(info_.projection * info_.view);
+  frame_data_.camera_pos = -glm::vec3(info_.view[3]) * glm::mat3(info_.view);
+  std::memcpy(frame_data_buffer_->get_mapped_data<std::byte>() + current_frame_ * (frame_data_buffer_->size() / frames_in_flight),
+              &frame_data_, sizeof(FrameData));
 }
 
 void Renderer3D::create_render_targets(const vk::Extent2D extent)

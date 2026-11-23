@@ -53,9 +53,9 @@ struct MaterialInfo {
   float metallic, roughness, normal_scale, occlusion_scale;
   struct Textures {
     struct Texture {
-      uint32_t index;
-      uint32_t tex_coord;
-      uint32_t sampler;
+      uint32_t index{UINT32_MAX};
+      uint32_t tex_coord{UINT32_MAX};
+      uint32_t sampler{UINT32_MAX};
     } albedo, metal_roughness, normal, occlusion, emissive;
   } textures;
 };

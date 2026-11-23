@@ -256,31 +256,12 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
   for (const auto& camera: asset->cameras) {
     std::visit(fastgltf::visitor{
                    [&](const fastgltf::Camera::Orthographic& orthographic) {
-                     glm::mat4 matrix{1.0f};
-                     matrix[0][0] = 1.0f / orthographic.xmag;
-                     matrix[1][1] = 1.0f / orthographic.ymag;
-                     matrix[2][2] = 2.0f / (orthographic.znear - orthographic.zfar);
-                     matrix[3][2] = (orthographic.zfar + orthographic.znear) / (orthographic.znear - orthographic.zfar);
-                     result.cameras.emplace_back(matrix);
+                     result.cameras.emplace_back(GLTFResource::Camera::Type::Orthographic, 0.0f, orthographic.xmag,
+                                                 orthographic.ymag, orthographic.znear, orthographic.zfar);
                    },
                    [&](const fastgltf::Camera::Perspective& perspective) {
-                     glm::mat4 matrix{0.0f};
-
-                     const float aspect_ratio = perspective.aspectRatio.value_or(16.0f / 9.0f);
-                     matrix[0][0] = 1.0f / (aspect_ratio * std::tan(0.5f * perspective.yfov));
-                     matrix[1][1] = 1.0f / std::tan(0.5f * perspective.yfov);
-                     matrix[2][3] = -1.0f;
-
-                     if (perspective.zfar.has_value()) {
-                       matrix[2][2] = (*perspective.zfar + perspective.znear) / (perspective.znear - *perspective.zfar);
-                       matrix[3][2] =
-                           (2.0f * *perspective.zfar * perspective.znear) / (perspective.znear - *perspective.zfar);
-                     } else {
-                       matrix[2][2] = -1.0f;
-                       matrix[3][2] = -2.0f * perspective.znear;
-                     }
-
-                     result.cameras.emplace_back(matrix);
+                     result.cameras.emplace_back(GLTFResource::Camera::Type::Perspective, perspective.yfov, 0.0f, 0.0f,
+                                                 perspective.znear, perspective.zfar);
                    }},
                camera.camera);
   }

@@ -78,7 +78,7 @@ foreach shader : shaders
         shader + '.spv',
         input : 'assets/shaders' / shader,
         output : shader + '.spv',
-        command : [slangc, '@INPUT@', '-target', 'spirv', '-g2', '-O3', '-o', '@OUTPUT@'],
+        command : [slangc, '@INPUT@', '-target', 'spirv', '-matrix-layout-column-major', '-g2', '-O3', '-o', '@OUTPUT@'],
         build_by_default : true,
     )
 endforeach

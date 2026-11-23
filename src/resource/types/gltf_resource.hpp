@@ -44,7 +44,12 @@ struct GLTFResource {
   };
 
   struct Camera {
-    glm::mat4 projection;
+    enum class Type : uint8_t { Perspective, Orthographic };
+    Type type;
+    float y_fov;
+    float x_mag, y_mag;
+    float z_near;
+    std::optional<float> z_far;
   };
 
   std::vector<Node> nodes;

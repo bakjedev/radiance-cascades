@@ -7,6 +7,7 @@
 #include "resource/types/gltf_resource.hpp"
 #include "resource/types/image_resource.hpp"
 #include "resource/types/shader_resource.hpp"
+#include "vulkan/glm_projection.hpp"
 
 struct QuitEvent {};
 
@@ -45,17 +46,23 @@ void Application::run()
         renderer_.draw_geometry({range, material, transform});
       }
     }
+
+    const float aspect = static_cast<float>(window_.width()) / static_cast<float>(window_.height());
     if (scene_.active_camera() != UINT32_MAX) {
       const auto& camera_entity = scene_.entities().at(scene_.active_camera());
       const auto& camera = scene_.resource()->cameras.at(camera_entity.camera_id);
-      projection = camera.projection;
-      view = camera_entity.transform;
+      switch (camera.type) {
+        case GLTFResource::Camera::Type::Perspective:
+          projection = perspective_vk_rev_z(camera.y_fov, aspect, camera.z_near, camera.z_far);
+          break;
+        case GLTFResource::Camera::Type::Orthographic:
+          projection = ortho_vk_rev_z(camera.x_mag, camera.y_mag, camera.z_near, *camera.z_far);
+          break;
+      }
+      view = glm::inverse(camera_entity.transform);
     } else {
-      projection =
-          glm::perspective(glm::radians(90.0f),
-                           static_cast<float>(window_.width()) / static_cast<float>(window_.height()), 100.0f, 0.1f);
-      // projection[1][1] *= -1.0f;
-      view = glm::lookAt(glm::vec3(0.0f, 5.0f, -5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+      projection = perspective_vk_rev_z(glm::radians(90.0f), aspect, 0.1f);
+      view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     }
 #else
     if (input_.mouse_down(MouseButton::Left) && !UserInterface::consuming()) {

@@ -23,7 +23,7 @@ struct FSOutput {
 }
 
 struct PushConstant {
-    row_major float4x4 view_proj;
+    float4x4 view_proj;
     uint geometries_id;
     uint materials_id;
     uint textures_id;
@@ -51,13 +51,13 @@ VSOutput vs_main(VSInput input, uint instanceID : SV_StartInstanceLocation, unif
     VSOutput out;
     Geometry geometry = storageBuffersGeometry[pc.geometries_id][instanceID];
 
-    float4 world = mul(float4(input.pos, 1.0), geometry.transform);
-    out.pos = mul(world, pc.view_proj);
+    float4 world = mul(geometry.transform,float4(input.pos, 1.0));
+    out.pos = mul(  pc.view_proj, world);
 
     float3x3 normal = adjugate((float3x3)geometry.transform);
-    out.normal = normalize(mul(input.normal, normal));
+    out.normal = normalize(mul(normal, input.normal));
 
-    out.tangent = float4(normalize(mul(input.tangent.xyz, (float3x3)geometry.transform)), input.tangent.w);
+    out.tangent = float4(normalize(mul((float3x3)geometry.transform, input.tangent.xyz)), input.tangent.w);
 
     out.uv = input.uv;
     out.uv1 = input.uv1;
@@ -141,7 +141,7 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
         float2 uv = normal_tex.uv == 0 ? input.uv : input.uv1;
         normal = textures[NonUniformResourceIndex(pc.textures_id + normal_tex.index)].Sample(samplers[pc.samplers_id + normal_tex.sampler], uv).xyz;
     }
-    normal *= 2.0 - 1.0;
+    normal = normal * 2.0 - 1.0;
     normal.xy *= material.normal_scale;
     float3 normal_ws = normalize(normal.x * T + normal.y * B + normal.z * N);
 
