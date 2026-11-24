@@ -103,15 +103,15 @@ bool try_get_texture(uint packed, out Texture texture) {
   return texture.index != MaterialTextureMask;
 }
 
-float2 signNotZero(float2 v) {
+float2 sign_not_zero(float2 v) {
     return float2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0);
 }
 
-float2 octEncode(float3 n) {
+float2 oct_encode(float3 n) {
     n /= (abs(n.x) + abs(n.y) + abs(n.z));
     float2 p = n.xy;
     if (n.z < 0.0)
-        p = (1.0 - abs(p.yx)) * signNotZero(p);
+        p = (1.0 - abs(p.yx)) * sign_not_zero(p);
     return p;
 }
 
@@ -125,52 +125,65 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     if (try_get_texture(material.albedo_tex, albedo_tex))
     {
         float2 uv = albedo_tex.uv == 0 ? input.uv : input.uv1;
-        albedo *= textures[NonUniformResourceIndex(pc.textures_id + albedo_tex.index)].Sample(samplers[pc.samplers_id + albedo_tex.sampler], uv);
+        albedo *= textures[NonUniformResourceIndex(pc.textures_id + albedo_tex.index)].Sample(
+            samplers[NonUniformResourceIndex(pc.samplers_id + albedo_tex.sampler)],
+            uv);
     }
 
     out.color = albedo;
 
-    float3 N = input.normal;
+    float3 N = normalize(input.normal);
     float3 T = normalize(input.tangent.xyz - N * dot(N, input.tangent.xyz));
     float3 B = cross(N, T) * input.tangent.w;
 
-    float3 normal;
+    float3 normal = float3(0.5, 0.5, 1.0);
     Texture normal_tex;
     if (try_get_texture(material.normal_tex, normal_tex))
     {
         float2 uv = normal_tex.uv == 0 ? input.uv : input.uv1;
-        normal = textures[NonUniformResourceIndex(pc.textures_id + normal_tex.index)].Sample(samplers[pc.samplers_id + normal_tex.sampler], uv).xyz;
+        normal = textures[NonUniformResourceIndex(pc.textures_id + normal_tex.index)].Sample(
+            samplers[NonUniformResourceIndex(pc.samplers_id + normal_tex.sampler)],
+            uv).xyz;
     }
     normal = normal * 2.0 - 1.0;
     normal.xy *= material.normal_scale;
     float3 normal_ws = normalize(normal.x * T + normal.y * B + normal.z * N);
 
-    out.normal = octEncode(normal_ws);
+    out.normal = oct_encode(normal_ws);
 
-    float2 metal_roughness;
+    float2 metal_roughness = 1.0;
     Texture metal_rough_tex;
     if (try_get_texture(material.metal_roughness_tex, metal_rough_tex))
     {
         float2 uv = metal_rough_tex.uv == 0 ? input.uv : input.uv1;
-        metal_roughness = textures[NonUniformResourceIndex(pc.textures_id + metal_rough_tex.index)].Sample(samplers[pc.samplers_id + metal_rough_tex.sampler], uv).bg;
+        metal_roughness = textures[NonUniformResourceIndex(pc.textures_id + metal_rough_tex.index)].Sample(
+            samplers[NonUniformResourceIndex(pc.samplers_id + metal_rough_tex.sampler)],
+            uv).bg;
     }
+    metal_roughness.x *= material.metallic;
+    metal_roughness.y *= material.roughness;
 
-    float occlusion;
+    float occlusion = 1.0;
     Texture occlusion_tex;
     if (try_get_texture(material.occlusion_tex, occlusion_tex))
     {
         float2 uv = occlusion_tex.uv == 0 ? input.uv : input.uv1;
-        occlusion = textures[NonUniformResourceIndex(pc.textures_id + occlusion_tex.index)].Sample(samplers[pc.samplers_id + occlusion_tex.sampler], uv).r;
+        float value = textures[NonUniformResourceIndex(pc.textures_id + occlusion_tex.index)].Sample(
+            samplers[NonUniformResourceIndex(pc.samplers_id + occlusion_tex.sampler)],
+            uv).r;
+        occlusion = 1.0 + material.occlusion_scale * (value - 1.0);
     }
 
     out.pbr = float4(metal_roughness, occlusion, 1.0);
 
-    float3 emissive;
+    float3 emissive = 1.0;
     Texture emissive_tex;
     if (try_get_texture(material.emissive_tex, emissive_tex))
     {
         float2 uv = emissive_tex.uv == 0 ? input.uv : input.uv1;
-        emissive = textures[NonUniformResourceIndex(pc.textures_id + emissive_tex.index)].Sample(samplers[pc.samplers_id + emissive_tex.sampler], uv).rgb;
+        emissive = textures[NonUniformResourceIndex(pc.textures_id + emissive_tex.index)].Sample(
+            samplers[NonUniformResourceIndex(pc.samplers_id + emissive_tex.sampler)],
+            uv).rgb;
     }
     emissive *= material.emissive_color;
 

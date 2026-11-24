@@ -51,7 +51,11 @@ private:
 
   struct FrameData {
     glm::mat4 inv_view_proj;
-    glm::vec3 camera_pos;
+    alignas(16) glm::vec3 camera_pos;
+    alignas(16) glm::vec3 sun_dir;
+    alignas(16) glm::vec3 sun_color;
+    alignas(16) glm::vec3 ambient;
+    alignas(16) glm::vec3 ambient_indirect;
   };
 
   RenderInfo info_{};

@@ -130,6 +130,8 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
     raster_pipeline_desc.layout = raster_pipeline_layout_.get();
 
+    raster_pipeline_desc.rasterization.cullMode = vk::CullModeFlagBits::eBack;
+
     raster_pipeline_ = create_graphics_pipeline(device_.get(), raster_pipeline_desc);
 
     debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(raster_pipeline_.get()),
@@ -194,8 +196,12 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
       .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, frame_data_buffer_->buffer(), 0, frame_data_size)
       .add_buffer(4, 1, vk::DescriptorType::eUniformBuffer, frame_data_buffer_->buffer(), frame_data_size,
                   frame_data_size)
-
       .update(device_.get(), bindless_descriptor_set_);
+
+  frame_data_.sun_dir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.2f));
+  frame_data_.sun_color = glm::vec3(1.0f, 0.95f, 0.9f) * 3.0f;
+  frame_data_.ambient = glm::vec3(0.15f, 0.18f, 0.25f);
+  frame_data_.ambient_indirect = glm::vec3(0.05f, 0.04f, 0.03f);
 }
 
 Renderer3D::~Renderer3D() { device_.get().waitIdle(); }
@@ -205,7 +211,10 @@ void Renderer3D::render(RenderInfo info)
   info_ = std::move(info);
 
   const vk::Extent2D extent = {info_.window_size.first, info_.window_size.second};
-  if (needs_recreate_ || extent != swapchain_.extent()) create_render_targets(extent);
+  if (needs_recreate_ || extent != swapchain_.extent()) {
+    device_.get().waitIdle();
+    create_render_targets(extent);
+  }
 
   if (!begin_frame(extent)) {
     return;
@@ -566,7 +575,8 @@ void Renderer3D::update_frame_data()
 {
   frame_data_.inv_view_proj = glm::inverse(info_.projection * info_.view);
   frame_data_.camera_pos = -glm::vec3(info_.view[3]) * glm::mat3(info_.view);
-  std::memcpy(frame_data_buffer_->get_mapped_data<std::byte>() + current_frame_ * (frame_data_buffer_->size() / frames_in_flight),
+  std::memcpy(frame_data_buffer_->get_mapped_data<std::byte>() +
+                  current_frame_ * (frame_data_buffer_->size() / frames_in_flight),
               &frame_data_, sizeof(FrameData));
 }
 

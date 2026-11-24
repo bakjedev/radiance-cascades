@@ -2,8 +2,7 @@
 #include <SDL3/SDL_vulkan.h>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
-#include <iostream>
-
+#include "camera_fly.hpp"
 #include "resource/types/gltf_resource.hpp"
 #include "resource/types/image_resource.hpp"
 #include "resource/types/shader_resource.hpp"
@@ -25,12 +24,24 @@ void Application::run()
 
   file_system_.add_route("assets", "../assets");
 
-#ifndef RENDERER_3D
+#ifdef RENDERER_3D
+  CameraFly camera_fly{};
+  if (const auto camera = scene_.active_camera()) {
+    camera_fly.set_camera(scene_, *camera);
+  }
+#else
   auto texture_resource = resource_manager_.create_from_file<ImageResource>(
       "image.png", ImageResourceLoader{&file_system_, &renderer_}, ImageColorSpace::sRGB);
 #endif
 
+  using clock = std::chrono::high_resolution_clock;
+  auto last_time = clock::now();
+
   while (running) {
+    const auto current_time = clock::now();
+    const float delta_time = std::chrono::duration<float>(current_time - last_time).count();
+    last_time = current_time;
+
     input_.begin_frame();
     poll_events();
     input_.end_frame();
@@ -42,27 +53,29 @@ void Application::run()
     glm::mat4 projection, view;
 #ifdef RENDERER_3D
     for (const auto& [transform, mesh_id, camera_id]: scene_.entities()) {
+      if (mesh_id == UINT32_MAX) continue;
       for (const auto& [range, material]: scene_.resource()->meshes.at(mesh_id).primitives) {
         renderer_.draw_geometry({range, material, transform});
       }
     }
 
-    const float aspect = static_cast<float>(window_.width()) / static_cast<float>(window_.height());
-    if (scene_.active_camera() != UINT32_MAX) {
-      const auto& camera_entity = scene_.entities().at(scene_.active_camera());
-      const auto& camera = scene_.resource()->cameras.at(camera_entity.camera_id);
-      switch (camera.type) {
-        case GLTFResource::Camera::Type::Perspective:
-          projection = perspective_vk_rev_z(camera.y_fov, aspect, camera.z_near, camera.z_far);
+    if (auto active_camera = scene_.active_camera()) {
+      camera_fly.update(scene_, input_, delta_time);
+
+      const auto& cam_entity = scene_.entities().at(*active_camera);
+      view = glm::inverse(cam_entity.transform);
+
+      const auto& [type, y_fov, x_mag, y_mag, z_near, z_far] = scene_.cameras().at(cam_entity.camera_id);
+      const float aspect = static_cast<float>(window_.width()) / static_cast<float>(window_.height());
+
+      switch (type) {
+        case Scene::Camera::Type::Perspective:
+          projection = perspective_vk_rev_z(y_fov, aspect, z_near, z_far);
           break;
-        case GLTFResource::Camera::Type::Orthographic:
-          projection = ortho_vk_rev_z(camera.x_mag, camera.y_mag, camera.z_near, *camera.z_far);
+        case Scene::Camera::Type::Orthographic:
+          projection = ortho_vk_rev_z(x_mag, y_mag, z_near, *z_far);
           break;
       }
-      view = glm::inverse(camera_entity.transform);
-    } else {
-      projection = perspective_vk_rev_z(glm::radians(90.0f), aspect, 0.1f);
-      view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     }
 #else
     if (input_.mouse_down(MouseButton::Left) && !UserInterface::consuming()) {
