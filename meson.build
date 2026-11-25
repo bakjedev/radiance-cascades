@@ -69,6 +69,7 @@ shaders = [
     'blur.slang',
     'imgui.slang',
     'raster.slang',
+    'shadow.slang',
     'composite3d.slang'
 ]
 

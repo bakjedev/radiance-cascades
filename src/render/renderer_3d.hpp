@@ -42,11 +42,15 @@ private:
     uint32_t normal_tex;
     uint32_t occlusion_tex;
     uint32_t emissive_tex;
+    bool alpha_mode;
+    float alpha_cutoff;
+    uint32_t pad_0;
+    uint32_t pad_1;
   };
 
   struct Geometry {
     glm::mat4 transform;
-    GPUMaterial material;
+    alignas(16) GPUMaterial material;
   };
 
   struct FrameData {
@@ -56,6 +60,16 @@ private:
     alignas(16) glm::vec3 sun_color;
     alignas(16) glm::vec3 ambient;
     alignas(16) glm::vec3 ambient_indirect;
+  };
+
+  struct Cascades {
+    static constexpr auto Resolution = 2048;
+    static constexpr auto Count = 4;
+    static constexpr auto Distance = 150.0f;
+    static constexpr auto Lambda = 0.75f;
+    static constexpr float FilterTexels = 2.0f;
+    glm::mat4 world_to_shadow_clip[Count];
+    glm::vec4 world_units_per_texel;
   };
 
   RenderInfo info_{};
@@ -74,12 +88,22 @@ private:
   std::optional<Buffer> indirect_buffer_;
   std::optional<Buffer> geometries_buffer_;
 
-  std::optional<Buffer> frame_data_buffer_;
+  std::optional<Buffer> ubo_buffer_;
   FrameData frame_data_{};
+  Cascades cascades_{};
+  vk::DeviceSize frame_data_size_{};
+  vk::DeviceSize cascades_size_{};
+  vk::DeviceSize cascades_base_{};
+
+  vk::UniqueSampler shadow_sampler_;
 
   vk::UniquePipelineLayout raster_pipeline_layout_;
   vk::UniqueShaderModule raster_shader_module_;
   vk::UniquePipeline raster_pipeline_;
+
+  vk::UniquePipelineLayout shadow_pipeline_layout_;
+  vk::UniqueShaderModule shadow_shader_module_;
+  vk::UniquePipeline shadow_pipeline_;
 
   vk::UniquePipelineLayout composite_pipeline_layout_;
   vk::UniqueShaderModule composite_shader_module_;
@@ -107,6 +131,10 @@ private:
   fwrk::ResourceID emissive_id_;
   fwrk::ResourceID depth_id_;
 
+  std::optional<Image> shadow_image_;
+  vk::UniqueImageView shadow_view_;
+  fwrk::ResourceID shadow_id_;
+
   std::optional<Image> composite_image_;
   vk::UniqueImageView composite_view_;
   fwrk::ResourceID composite_id_;
@@ -117,6 +145,7 @@ private:
 
   void imgui_pass(vk::CommandBuffer cmd) const;
   void raster_pass(vk::CommandBuffer cmd) const;
+  void shadow_pass(vk::CommandBuffer cmd, uint32_t cascade) const;
   void composite_pass(vk::CommandBuffer cmd) const;
   void blit_pass(vk::CommandBuffer cmd) const;
 
@@ -129,6 +158,8 @@ private:
   void create_render_targets(vk::Extent2D extent);
 
   void update_descriptors();
+
+  void update_cascades();
 
   static uint32_t pack_texture_index(const MaterialInfo::Textures::Texture& texture);
 };

@@ -121,8 +121,8 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
   };
 
   for (const auto& sampler: asset->samplers) {
-    const auto min_filter = to_filter(sampler.minFilter.value_or(fastgltf::Filter::Nearest));
-    const auto mag_filter = to_filter(sampler.magFilter.value_or(fastgltf::Filter::Nearest));
+    const auto min_filter = to_filter(sampler.minFilter.value_or(fastgltf::Filter::LinearMipMapLinear));
+    const auto mag_filter = to_filter(sampler.magFilter.value_or(fastgltf::Filter::Linear));
     const auto wrap_s = to_wrap(sampler.wrapS);
     const auto wrap_t = to_wrap(sampler.wrapT);
     result.samplers.push_back(renderer->create_sampler(min_filter, mag_filter, wrap_s, wrap_t));
@@ -141,38 +141,28 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
     mat_info.emissive_color = glm::make_vec3(material.emissiveFactor.data());
     mat_info.metallic = material.pbrData.metallicFactor;
     mat_info.roughness = material.pbrData.roughnessFactor;
+    mat_info.alpha_cutoff = material.alphaCutoff;
+    mat_info.alpha_mode = material.alphaMode != fastgltf::AlphaMode::Opaque;
 
-    if (const auto& tex = material.pbrData.baseColorTexture; tex.has_value()) {
-      mat_info.textures.albedo.index = static_cast<uint32_t>(tex->textureIndex);
-      mat_info.textures.albedo.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
-      mat_info.textures.albedo.sampler = result.textures[tex->textureIndex].second.id;
-    }
+    const auto fill_texture = [&](auto& texture, const auto& info) {
+      const auto& [image, sampler] = result.textures[info.textureIndex];
+      texture.index = image.id;
+      texture.tex_coord = static_cast<uint32_t>(info.texCoordIndex);
+      texture.sampler = sampler.id;
+    };
 
-    if (const auto& tex = material.pbrData.metallicRoughnessTexture; tex.has_value()) {
-      mat_info.textures.metal_roughness.index = static_cast<uint32_t>(tex->textureIndex);
-      mat_info.textures.metal_roughness.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
-      mat_info.textures.metal_roughness.sampler = result.textures[tex->textureIndex].second.id;
+    if (const auto& tex_info = material.pbrData.baseColorTexture) fill_texture(mat_info.textures.albedo, *tex_info);
+    if (const auto& tex_info = material.pbrData.metallicRoughnessTexture)
+      fill_texture(mat_info.textures.metal_roughness, *tex_info);
+    if (const auto& tex_info = material.normalTexture) {
+      mat_info.normal_scale = tex_info->scale;
+      fill_texture(mat_info.textures.normal, *tex_info);
     }
-
-    if (const auto& tex = material.normalTexture; tex.has_value()) {
-      mat_info.normal_scale = tex->scale;
-      mat_info.textures.normal.index = static_cast<uint32_t>(tex->textureIndex);
-      mat_info.textures.normal.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
-      mat_info.textures.normal.sampler = result.textures[tex->textureIndex].second.id;
+    if (const auto& tex_info = material.occlusionTexture) {
+      mat_info.occlusion_scale = tex_info->strength;
+      fill_texture(mat_info.textures.occlusion, *tex_info);
     }
-
-    if (const auto& tex = material.occlusionTexture; tex.has_value()) {
-      mat_info.occlusion_scale = tex->strength;
-      mat_info.textures.occlusion.index = static_cast<uint32_t>(tex->textureIndex);
-      mat_info.textures.occlusion.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
-      mat_info.textures.occlusion.sampler = result.textures[tex->textureIndex].second.id;
-    }
-
-    if (const auto& tex = material.emissiveTexture; tex.has_value()) {
-      mat_info.textures.emissive.index = static_cast<uint32_t>(tex->textureIndex);
-      mat_info.textures.emissive.tex_coord = static_cast<uint32_t>(tex->texCoordIndex);
-      mat_info.textures.emissive.sampler = result.textures[tex->textureIndex].second.id;
-    }
+    if (const auto& tex_info = material.emissiveTexture) fill_texture(mat_info.textures.emissive, *tex_info);
 
     result.materials.push_back(renderer->create_material(mat_info));
   }
@@ -195,7 +185,7 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
         range.index_count = static_cast<uint32_t>(index_accessor.count);
         indices.reserve(indices.size() + index_accessor.count);
         fastgltf::iterateAccessor<uint32_t>(asset.get(), index_accessor,
-                                            [&](const uint32_t idx) { indices.push_back(start_vertex + idx); });
+                                            [&](const uint32_t idx) { indices.push_back(idx); });
       }
 
       {

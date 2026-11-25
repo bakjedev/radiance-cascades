@@ -3,6 +3,9 @@
 struct PushConstant {
     uint composite_id;
     uint frame_id;
+    uint cascades_id;
+    uint shadow_id;
+    uint shadow_sampler_id;
     uint albedo_id;
     uint normal_id;
     uint pbr_id;
@@ -19,6 +22,11 @@ struct FrameData {
     float3 ambient_indirect;
 }
 
+struct Cascades {
+    float4x4 world_to_shadow_clip[4];
+    float4 world_units_per_texel;
+}
+
 struct Fragment {
     float3 normal;
     float3 dir;
@@ -30,7 +38,26 @@ struct Fragment {
 
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
 [[vk::binding(2, 0)]] Texture2D textures[];
-[[vk::binding(4, 0)]] ConstantBuffer<FrameData> uniformBuffers[];
+[[vk::binding(2, 0)]] Texture2DArray textureArrays[];
+[[vk::binding(4, 0)]] ConstantBuffer<FrameData> frameDataUBOs[];
+[[vk::binding(4, 0)]] ConstantBuffer<Cascades> cascadesUBOs[];
+[[vk::binding(3, 0)]] SamplerComparisonState shadowSamplers[];
+
+static const uint SHADOW_CASCADE_COUNT = 4;
+static const float SHADOW_RES = 2048.0;
+static const float FILTER_TEXELS = 2.0;
+static const float NORMAL_OFFSET_TEXELS = 1.0;
+
+static const float2 POISSON_DISK[16] = {
+    float2(-0.94201624, -0.39906216), float2( 0.94558609, -0.76890725),
+    float2(-0.09418410, -0.92938870), float2( 0.34495938,  0.29387760),
+    float2(-0.91588581,  0.45771432), float2(-0.81544232, -0.87912464),
+    float2(-0.38277543,  0.27676845), float2( 0.97484398,  0.75648379),
+    float2( 0.44323325, -0.97511554), float2( 0.53742981, -0.47373420),
+    float2(-0.26496911, -0.41893023), float2( 0.79197514,  0.19090188),
+    float2(-0.24188840,  0.99706507), float2(-0.81409955,  0.91437590),
+    float2( 0.19984126,  0.78641367), float2( 0.14383161, -0.14100790),
+};
 
 float3 oct_decode(float2 f)
 {
@@ -81,6 +108,43 @@ float3 evaluate(Fragment frag, float3 light) {
     return (Fd + Fr) * NoL;
 }
 
+    float interleaved_gradient_noise(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }
+
+    float pcf_poisson(Texture2DArray shadow_map, SamplerComparisonState shadow_sampler, float2 uv, float layer, float depth, float radius_uv, float2 pixel) {
+        float rotation_angle = interleaved_gradient_noise(pixel) * 2.0 * PI;
+        float sin_angle, cos_angle;
+        sincos(rotation_angle, sin_angle, cos_angle);
+        float2x2 rotation = float2x2(cos_angle, -sin_angle, sin_angle, cos_angle);
+
+        float sum = 0.0;
+        [unroll]
+        for (uint i = 0; i < 16; ++i) {
+            float2 offset = mul(rotation, POISSON_DISK[i]) * radius_uv;
+            sum += shadow_map.SampleCmpLevelZero(shadow_sampler, float3(uv + offset, layer), depth);
+        }
+        return sum * (1.0 / 16.0);
+    }
+
+    float visibility(Cascades cascades, Texture2DArray shadow_map, SamplerComparisonState shadow_sampler, float3 world, float3 normal, float n_dot_l, float2 pixel) {
+        const float radius_uv = FILTER_TEXELS / SHADOW_RES;
+        const float margin_uv = (FILTER_TEXELS + 1.0) / SHADOW_RES;
+
+        for (uint i = 0; i < 4; i++) {
+            float world_units_per_texel = cascades.world_units_per_texel[i];
+            float normal_offset_distance = world_units_per_texel * NORMAL_OFFSET_TEXELS * (1.0 - n_dot_l);
+            float3 lookup_position = world + normal * normal_offset_distance;
+
+            float3 shadow_ndc = mul(cascades.world_to_shadow_clip[i], float4(lookup_position, 1.0)).xyz;
+            float2 shadow_uv = shadow_ndc.xy * 0.5 + 0.5;
+
+            bool inside_this_cascade = all(shadow_uv >= margin_uv) && all(shadow_uv <= 1.0 - margin_uv) && shadow_ndc.z >= 0.0 && shadow_ndc.z <= 1.0;
+            if (!inside_this_cascade) continue;
+
+            return pcf_poisson(shadow_map, shadow_sampler, shadow_uv, i, shadow_ndc.z, radius_uv, pixel);
+        }
+        return 1.0;
+    }
+
 [shader("compute")]
 [numthreads(8, 8)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc) {
@@ -99,7 +163,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
         return;
     }
 
-    FrameData frame_data = uniformBuffers[pc.frame_id];
+    FrameData frame_data = frameDataUBOs[pc.frame_id];
     float2 uv = (float2(local) + 0.5) / float2(size);
     float2 ndc_xy = uv * 2.0 - 1.0;
     float4 clip = float4(ndc_xy, depth, 1.0);
@@ -121,7 +185,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
 
     float3 color = 0.0;
 
-    color += evaluate(fragment, frame_data.sun_dir) * frame_data.sun_color;
+    float n_dot_l = saturate(dot(fragment.normal, frame_data.sun_dir));
+    float visibility = n_dot_l > 0.0 ? visibility(cascadesUBOs[pc.cascades_id],
+                                                 textureArrays[pc.shadow_id],
+                                                 shadowSamplers[pc.shadow_sampler_id],
+                                                 world.xyz, fragment.normal, n_dot_l, float2(local)) : 0.0;
+
+    color += evaluate(fragment, frame_data.sun_dir) * frame_data.sun_color * visibility;
 
     float3 ambient = lerp(frame_data.ambient_indirect, frame_data.ambient, fragment.normal.y * 0.5 + 0.5);
     color += ambient * fragment.color * (1.0 - fragment.metallic) * fragment.ao;
@@ -137,4 +207,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     // img.Store(local, float4(emissive, 1.0));
     // img.Store(local, float4(depth.xxx, 1.0));
     // img.Store(local, world);
+    // img.Store(local, float4(visibility.xxx, 1.0));
 }

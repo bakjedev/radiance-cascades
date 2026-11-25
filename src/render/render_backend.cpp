@@ -178,11 +178,16 @@ void RenderBackend::imgui_new_frame() { ImGui_ImplVulkan_NewFrame(); }
 GPUImage RenderBackend::create_texture(const std::span<const uint8_t> data, const std::pair<uint32_t, uint32_t>& size,
                                        const bool srgb)
 {
+  const auto [width, height] = size;
+  const auto mips = static_cast<uint32_t>(std::bit_width(std::max(width, height)));
+
   auto image = Image(device_.get_allocator(), device_.get(),
                      ImageDesc{}
                          .set_extent(size.first, size.second)
                          .set_format(srgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm)
-                         .set_usage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst)
+                         .set_usage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
+                                    vk::ImageUsageFlagBits::eTransferSrc)
+                         .set_mips(mips)
                          .set_debug_name(std::format("Texture {}", texture_images_.size())));
 
   const vk::DeviceSize buffer_size = data.size() * sizeof(data[0]);
@@ -207,7 +212,7 @@ GPUImage RenderBackend::create_texture(const std::span<const uint8_t> data, cons
                        .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
                        .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored)
                        .setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
-                       .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
+                       .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, mips, 0, 1})
                        .setImage(image.image());
     cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
 
@@ -217,12 +222,56 @@ GPUImage RenderBackend::create_texture(const std::span<const uint8_t> data, cons
     cmd.copyBufferToImage2(
         vk::CopyBufferToImageInfo2{staging.buffer(), image.image(), vk::ImageLayout::eTransferDstOptimal, 1, &region});
 
-    barrier.setSrcStageMask(vk::PipelineStageFlagBits2::eCopy);
-    barrier.setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite);
-    barrier.setDstStageMask(vk::PipelineStageFlagBits2::eFragmentShader);
-    barrier.setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead);
-    barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
-    barrier.setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
+    barrier.setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+
+    auto mip_w = static_cast<int32_t>(width);
+    auto mip_h = static_cast<int32_t>(height);
+    for (uint32_t i = 1; i < mips; i++) {
+      barrier.subresourceRange.setBaseMipLevel(i - 1);
+      barrier.setSrcStageMask(i == 1 ? vk::PipelineStageFlagBits2::eCopy : vk::PipelineStageFlagBits2::eBlit)
+          .setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite)
+          .setDstStageMask(vk::PipelineStageFlagBits2::eBlit)
+          .setDstAccessMask(vk::AccessFlagBits2::eTransferRead)
+          .setOldLayout(vk::ImageLayout::eTransferDstOptimal)
+          .setNewLayout(vk::ImageLayout::eTransferSrcOptimal);
+      cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+
+      const int32_t next_w = std::max(mip_w / 2, 1);
+      const int32_t next_h = std::max(mip_h / 2, 1);
+
+      const auto blit = vk::ImageBlit2{}
+                            .setSrcSubresource({vk::ImageAspectFlagBits::eColor, i - 1, 0, 1})
+                            .setSrcOffsets({vk::Offset3D{0, 0, 0}, vk::Offset3D{mip_w, mip_h, 1}})
+                            .setDstSubresource({vk::ImageAspectFlagBits::eColor, i, 0, 1})
+                            .setDstOffsets({vk::Offset3D{0, 0, 0}, vk::Offset3D{next_w, next_h, 1}});
+
+      cmd.blitImage2(vk::BlitImageInfo2{}
+                         .setSrcImage(image.image())
+                         .setSrcImageLayout(vk::ImageLayout::eTransferSrcOptimal)
+                         .setDstImage(image.image())
+                         .setDstImageLayout(vk::ImageLayout::eTransferDstOptimal)
+                         .setRegions(blit)
+                         .setFilter(vk::Filter::eLinear));
+
+      barrier.setSrcStageMask(vk::PipelineStageFlagBits2::eBlit)
+          .setSrcAccessMask(vk::AccessFlagBits2::eTransferRead)
+          .setDstStageMask(vk::PipelineStageFlagBits2::eFragmentShader)
+          .setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead)
+          .setOldLayout(vk::ImageLayout::eTransferSrcOptimal)
+          .setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
+      cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
+
+      mip_w = next_w;
+      mip_h = next_h;
+    }
+
+    barrier.subresourceRange.baseMipLevel = mips - 1;
+    barrier.setSrcStageMask(mips == 1 ? vk::PipelineStageFlagBits2::eCopy : vk::PipelineStageFlagBits2::eBlit)
+        .setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite)
+        .setDstStageMask(vk::PipelineStageFlagBits2::eFragmentShader)
+        .setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead)
+        .setOldLayout(vk::ImageLayout::eTransferDstOptimal)
+        .setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
     cmd.pipelineBarrier2(vk::DependencyInfo{}.setImageMemoryBarriers(barrier));
   });
 

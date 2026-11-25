@@ -1,5 +1,8 @@
 #include "renderer_3d.hpp"
 
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
+
 #include "imgui_impl_vulkan.h"
 #include "src/vulkan/descriptor.hpp"
 #include "src/vulkan/pipeline.hpp"
@@ -13,9 +16,18 @@ namespace {
     uint32_t samplers_id;
   };
 
+  struct ShadowPushConstant {
+    uint32_t cascade;
+    uint32_t cascades_id;
+    uint32_t geometries_id;
+  };
+
   struct CompositePushConstant {
     uint32_t composite_id;
     uint32_t frame_id;
+    uint32_t cascades_id;
+    uint32_t shadow_id;
+    uint32_t shadow_sampler_id;
     uint32_t albedo_id;
     uint32_t normal_id;
     uint32_t pbr_id;
@@ -34,6 +46,7 @@ namespace {
     PBRTexture,
     EmissiveTexture,
     DepthTexture,
+    ShadowTexture,
     CompositeTexture,
     Textures,
   };
@@ -45,11 +58,17 @@ namespace {
 
   enum SamplerDescriptors {
     DefaultSampler = 0,
+    ShadowSampler,
     TextureSamplers,
   };
 
   enum ImageDescriptors {
     CompositeImage = 0,
+  };
+
+  enum UBODescriptors {
+    FrameDataUBO = 0,
+    CascadesUBO,
   };
 } // namespace
 
@@ -73,15 +92,46 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
                                         .debug_name = "Geometries buffer"});
 
   const auto ubo_alignment = device_.get_physical().getProperties().limits.minUniformBufferOffsetAlignment;
-  const auto frame_data_size = (sizeof(FrameData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+  frame_data_size_ = (sizeof(FrameData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+  cascades_size_ = (sizeof(Cascades) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+  constexpr auto frame_data_base = static_cast<vk::DeviceSize>(0);
+  cascades_base_ = frame_data_size_ * frames_in_flight;
 
-  frame_data_buffer_.emplace(
+  ubo_buffer_.emplace(
       device_.get_allocator(), device_.get(),
       BufferDesc{}
-          .set_size(frame_data_size * frames_in_flight)
+          .set_size(frame_data_size_ * frames_in_flight + cascades_size_ * frames_in_flight)
           .set_usage(vk::BufferUsageFlagBits::eUniformBuffer)
           .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
-          .set_debug_name("FrameData UBO"));
+          .set_debug_name("UBOs"));
+
+  shadow_image_.emplace(
+      device_.get_allocator(), device_.get(),
+      ImageDesc{}
+          .set_format(vk::Format::eD32Sfloat)
+          .set_extent(Cascades::Resolution, Cascades::Resolution)
+          .set_layers(Cascades::Count)
+          .set_usage(vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled)
+          .set_debug_name("Shadow Image"));
+  shadow_view_ =
+      shadow_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eDepth, vk::ImageViewType::e2DArray);
+  shadow_id_ = context_.import_image({.type = VK_IMAGE_TYPE_2D,
+                                      .size = {Cascades::Resolution, Cascades::Resolution, 1},
+                                      .format = VK_FORMAT_D32_SFLOAT,
+                                      .mip_count = 1,
+                                      .layer_count = Cascades::Count,
+                                      .state = fwrk::PhysicalState::Undefined},
+                                     shadow_image_->image(), "Shadow Image");
+
+  vk::SamplerCreateInfo sampler_info{};
+  sampler_info.setAddressModeU(vk::SamplerAddressMode::eClampToBorder);
+  sampler_info.setAddressModeV(vk::SamplerAddressMode::eClampToBorder);
+  sampler_info.setMinFilter(vk::Filter::eLinear);
+  sampler_info.setMagFilter(vk::Filter::eLinear);
+  sampler_info.setBorderColor(vk::BorderColor::eFloatOpaqueWhite);
+  sampler_info.setCompareEnable(vk::True);
+  sampler_info.setCompareOp(vk::CompareOp::eLessOrEqual);
+  shadow_sampler_ = device_.get().createSamplerUnique(sampler_info);
 
   std::vector<vk::DebugUtilsObjectNameInfoEXT> debug_object_names;
   debug_object_names.reserve(1);
@@ -139,6 +189,46 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   }
 
   {
+    vk::PushConstantRange shadow_push{vk::ShaderStageFlagBits::eVertex, 0, sizeof(ShadowPushConstant)};
+
+    const auto shadow_shader = create_info.load_shader("shadow.slang.spv");
+    shadow_shader_module_ = create_shader_module(device_.get(), shadow_shader);
+
+    shadow_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&shadow_push, 1});
+
+    GraphicsPipelineDesc shadow_pipeline_desc{};
+    shadow_pipeline_desc.stages.emplace_back(vk::ShaderStageFlagBits::eVertex, shadow_shader_module_.get(), "main");
+
+    shadow_pipeline_desc.vertex_bindings = {
+        {0, sizeof(Vertex), vk::VertexInputRate::eVertex},
+    };
+
+    shadow_pipeline_desc.vertex_attributes = {
+        {0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position)},
+    };
+
+    shadow_pipeline_desc.depth_format = vk::Format::eD32Sfloat;
+
+    shadow_pipeline_desc.depth_stencil.depthTestEnable = vk::True;
+    shadow_pipeline_desc.depth_stencil.depthWriteEnable = vk::True;
+    shadow_pipeline_desc.depth_stencil.depthCompareOp = vk::CompareOp::eLess;
+
+    shadow_pipeline_desc.layout = shadow_pipeline_layout_.get();
+
+    shadow_pipeline_desc.rasterization.depthClampEnable = vk::True;
+    shadow_pipeline_desc.rasterization.depthBiasEnable = vk::True;
+    shadow_pipeline_desc.rasterization.cullMode = vk::CullModeFlagBits::eNone;
+
+    shadow_pipeline_desc.dynamic_states.push_back(vk::DynamicState::eDepthBias);
+
+    shadow_pipeline_ = create_graphics_pipeline(device_.get(), shadow_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(shadow_pipeline_.get()),
+                                    "Shadow Pipeline");
+  }
+
+  {
     vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
 
     const auto composite_shader = create_info.load_shader("composite3d.slang.spv");
@@ -190,12 +280,18 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
   create_render_targets(create_info.initial_extent);
 
+  const auto ubo_buf = ubo_buffer_->buffer();
+
   DescriptorWriter{}
       .add_buffer(1, GeometriesBuffer, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer())
       .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
-      .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, frame_data_buffer_->buffer(), 0, frame_data_size)
-      .add_buffer(4, 1, vk::DescriptorType::eUniformBuffer, frame_data_buffer_->buffer(), frame_data_size,
-                  frame_data_size)
+      .add_image(3, ShadowSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
+                 shadow_sampler_.get())
+      .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, ubo_buf, frame_data_base, frame_data_size_)
+      .add_buffer(4, 1, vk::DescriptorType::eUniformBuffer, ubo_buf, frame_data_base + frame_data_size_,
+                  frame_data_size_)
+      .add_buffer(4, 2, vk::DescriptorType::eUniformBuffer, ubo_buf, cascades_base_, cascades_size_)
+      .add_buffer(4, 3, vk::DescriptorType::eUniformBuffer, ubo_buf, cascades_base_ + cascades_size_, cascades_size_)
       .update(device_.get(), bindless_descriptor_set_);
 
   frame_data_.sun_dir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.2f));
@@ -229,6 +325,8 @@ void Renderer3D::render(RenderInfo info)
 
   update_frame_data();
 
+  update_cascades();
+
   if (should_compile_) {
     should_compile_ = false;
     compile();
@@ -247,12 +345,21 @@ GPUSampler Renderer3D::create_sampler(const Filter min_filter, const Filter mag_
   // little bit of duplicated code incoming
 
   vk::SamplerCreateInfo create_info{};
+
+  create_info.setMaxLod(vk::LodClampNone);
+  create_info.setAnisotropyEnable(vk::True);
+  create_info.setMaxAnisotropy(device_.get_physical().getProperties().limits.maxSamplerAnisotropy);
+
   switch (min_filter) {
     case Filter::Nearest:
       create_info.setMinFilter(vk::Filter::eNearest);
+      create_info.setMipmapMode(vk::SamplerMipmapMode::eNearest);
+      create_info.setMaxLod(0.25f);
       break;
     case Filter::Linear:
       create_info.setMinFilter(vk::Filter::eLinear);
+      create_info.setMipmapMode(vk::SamplerMipmapMode::eNearest);
+      create_info.setMaxLod(0.25f);
       break;
     case Filter::NearestMipMapNearest:
       create_info.setMinFilter(vk::Filter::eNearest);
@@ -320,7 +427,7 @@ GPUMaterial Renderer3D::create_material(const MaterialInfo& material)
                           material.normal_scale, material.occlusion_scale, pack_texture_index(material.textures.albedo),
                           pack_texture_index(material.textures.metal_roughness),
                           pack_texture_index(material.textures.normal), pack_texture_index(material.textures.occlusion),
-                          pack_texture_index(material.textures.emissive));
+                          pack_texture_index(material.textures.emissive), material.alpha_mode, material.alpha_cutoff);
   upload_materials_ = true;
   return {id};
 }
@@ -396,12 +503,23 @@ void Renderer3D::compile()
           {.resource = {.id = depth_id_}, .load_op = fwrk::LoadOp::Clear, .store_op = fwrk::StoreOp::Store})
       .set_execute([this](vk::CommandBuffer cmd) { raster_pass(cmd); });
 
+  for (uint32_t i = 0; i < Cascades::Count; i++) {
+    graph.add_graphics_pass(std::format("Shadow Cascade {}", i))
+        .set_depth_attachment({.resource = {.id = shadow_id_},
+                               .load_op = fwrk::LoadOp::Clear,
+                               .store_op = fwrk::StoreOp::Store,
+                               .clear_value = {1.0f},
+                               .base_layer = i})
+        .set_execute([this, i](vk::CommandBuffer cmd) { shadow_pass(cmd, i); });
+  }
+
   graph.add_compute_pass("Composite")
       .set_image_read({.resource = {.id = albedo_id_}})
       .set_image_read({.resource = {.id = normal_id_}})
       .set_image_read({.resource = {.id = pbr_id_}})
       .set_image_read({.resource = {.id = emissive_id_}})
       .set_image_read({.resource = {.id = depth_id_}})
+      .set_image_read({.resource = {.id = shadow_id_}})
       .set_storage_image_write({.resource = {.id = composite_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { composite_pass(cmd); });
 
@@ -465,6 +583,37 @@ void Renderer3D::raster_pass(vk::CommandBuffer cmd) const
                           stride);
 }
 
+void Renderer3D::shadow_pass(vk::CommandBuffer cmd, const uint32_t cascade) const
+{
+  cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, shadow_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadow_pipeline_layout_.get(), 0, 1,
+                         &bindless_descriptor_set_, 0, nullptr);
+
+  constexpr vk::Viewport viewport{
+      0.0f, 0.0f, static_cast<float>(Cascades::Resolution), static_cast<float>(Cascades::Resolution), 0.0f, 1.0f};
+  cmd.setViewport(0, 1, &viewport);
+  constexpr vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{Cascades::Resolution, Cascades::Resolution}};
+  cmd.setScissor(0, 1, &scissor);
+
+  cmd.setDepthBias(0.0f, 4.0f / static_cast<float>(Cascades::Resolution), Cascades::FilterTexels + 1.0f);
+
+  const ShadowPushConstant push_constant{
+      .cascade = cascade, .cascades_id = CascadesUBO * 2 + current_frame_, .geometries_id = GeometriesBuffer};
+
+  cmd.pushConstants(shadow_pipeline_layout_.get(), vk::ShaderStageFlagBits::eVertex, 0, sizeof(ShadowPushConstant),
+                    &push_constant);
+
+  constexpr VkDeviceSize offset = 0;
+  const auto vertex_buffer = vertex_buffer_->buffer();
+  const auto index_buffer = index_buffer_->buffer();
+  cmd.bindVertexBuffers(0, 1, &vertex_buffer, &offset);
+  cmd.bindIndexBuffer(index_buffer, offset, vk::IndexType::eUint32);
+
+  constexpr auto stride = sizeof(vk::DrawIndexedIndirectCommand);
+  cmd.drawIndexedIndirect(indirect_buffer_->buffer(), stride * max_geometries * current_frame_, geometry_count_,
+                          stride);
+}
+
 void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline_.get());
@@ -472,7 +621,10 @@ void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
                          &bindless_descriptor_set_, 0, nullptr);
 
   const CompositePushConstant push_constant{.composite_id = CompositeImage,
-                                            .frame_id = current_frame_,
+                                            .frame_id = FrameDataUBO * 2 + current_frame_,
+                                            .cascades_id = CascadesUBO * 2 + current_frame_,
+                                            .shadow_id = ShadowTexture,
+                                            .shadow_sampler_id = ShadowSampler,
                                             .albedo_id = AlbedoTexture,
                                             .normal_id = NormalTexture,
                                             .pbr_id = PBRTexture,
@@ -529,7 +681,7 @@ void Renderer3D::upload_geometry()
                               .setInstanceCount(1)
                               .setFirstIndex(range.first_index)
                               .setVertexOffset(range.vertex_offset)
-                              .setFirstInstance(i);
+                              .setFirstInstance(current_frame_ * max_geometries + i);
     geometries_mapping[i] = Geometry{.transform = transform, .material = material};
   }
   geometry_submissions_.clear();
@@ -575,9 +727,8 @@ void Renderer3D::update_frame_data()
 {
   frame_data_.inv_view_proj = glm::inverse(info_.projection * info_.view);
   frame_data_.camera_pos = -glm::vec3(info_.view[3]) * glm::mat3(info_.view);
-  std::memcpy(frame_data_buffer_->get_mapped_data<std::byte>() +
-                  current_frame_ * (frame_data_buffer_->size() / frames_in_flight),
-              &frame_data_, sizeof(FrameData));
+  std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + frame_data_size_ * current_frame_, &frame_data_,
+              sizeof(FrameData));
 }
 
 void Renderer3D::create_render_targets(const vk::Extent2D extent)
@@ -693,6 +844,8 @@ void Renderer3D::update_descriptors()
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, DepthTexture, vk::DescriptorType::eSampledImage, depth_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
+      .add_image(2, ShadowTexture, vk::DescriptorType::eSampledImage, shadow_view_.get(),
+                 vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, CompositeTexture, vk::DescriptorType::eSampledImage, composite_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal);
 
@@ -708,6 +861,72 @@ void Renderer3D::update_descriptors()
   }
 
   writer.update(device_.get(), bindless_descriptor_set_);
+}
+
+void Renderer3D::update_cascades()
+{
+  const glm::mat4 camera_world = glm::inverse(info_.view);
+  const auto camera_pos = glm::vec3(camera_world[3]);
+  const glm::vec3 camera_forward = -glm::normalize(glm::vec3(camera_world[2]));
+
+  const float tan_half_fov_x = 1.0f / std::abs(info_.projection[0][0]);
+  const float tan_half_fov_y = 1.0f / std::abs(info_.projection[1][1]);
+
+  const glm::vec4 near_center_view = glm::inverse(info_.projection) * glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+  const float near_plane = -near_center_view.z / near_center_view.w;
+
+  const float corner_offset_sq = tan_half_fov_x * tan_half_fov_x + tan_half_fov_y * tan_half_fov_y;
+  const float corner_offset = std::sqrt(corner_offset_sq);
+
+  const glm::vec3 up =
+      std::abs(frame_data_.sun_dir.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+  const glm::mat4 light_view = glm::lookAt(glm::vec3(0.0f), -frame_data_.sun_dir, up);
+
+  float slice_near = near_plane;
+  for (uint32_t i = 0; i < Cascades::Count; i++) {
+    const float split_fraction = static_cast<float>(i + 1) / static_cast<float>(Cascades::Count);
+    const float uniform_split = near_plane + (Cascades::Distance - near_plane) * split_fraction;
+    const float log_split = near_plane * std::pow(Cascades::Distance / near_plane, split_fraction);
+    const float slice_far = glm::mix(uniform_split, log_split, Cascades::Lambda);
+
+    float sphere_center_depth;
+    float sphere_radius;
+    const float far_clamp_threshold = (slice_far - slice_near) / (slice_far + slice_near);
+    if (corner_offset_sq >= far_clamp_threshold) {
+      sphere_center_depth = slice_far;
+      sphere_radius = slice_far * corner_offset;
+    } else {
+      sphere_center_depth = 0.5f * (slice_far + slice_near) * (1.0f + corner_offset_sq);
+      const float near_corner_depth = slice_near - sphere_center_depth;
+      const float near_corner_distance_sq = slice_near * slice_near * corner_offset_sq;
+      sphere_radius = std::sqrt(near_corner_depth * near_corner_depth + near_corner_distance_sq);
+    }
+
+    const glm::vec3 sphere_center = camera_pos + camera_forward * sphere_center_depth;
+
+    auto sphere_center_light_view = glm::vec3(light_view * glm::vec4(sphere_center, 1.0f));
+
+    const float world_units_per_texel = 2.0f * sphere_radius / static_cast<float>(Cascades::Resolution);
+    sphere_center_light_view.x = std::floor(sphere_center_light_view.x / world_units_per_texel) * world_units_per_texel;
+    sphere_center_light_view.y = std::floor(sphere_center_light_view.y / world_units_per_texel) * world_units_per_texel;
+
+    const float box_left = sphere_center_light_view.x - sphere_radius;
+    const float box_right = sphere_center_light_view.x + sphere_radius;
+    const float box_bottom = sphere_center_light_view.y - sphere_radius;
+    const float box_top = sphere_center_light_view.y + sphere_radius;
+    const float box_near = sphere_center_light_view.z + sphere_radius;
+    const float box_far = sphere_center_light_view.z - sphere_radius;
+
+    const glm::mat4 light_to_shadow_clip = glm::ortho(box_left, box_right, box_bottom, box_top, -box_near, -box_far);
+
+    cascades_.world_to_shadow_clip[i] = light_to_shadow_clip * light_view;
+    cascades_.world_units_per_texel[static_cast<int>(i)] = world_units_per_texel;
+
+    slice_near = slice_far;
+  }
+
+  std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + cascades_base_ + cascades_size_ * current_frame_, &cascades_,
+              sizeof(Cascades));
 }
 
 uint32_t Renderer3D::pack_texture_index(const MaterialInfo::Textures::Texture& texture)

@@ -31,10 +31,14 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
   }
 
   auto available_extensions = device.enumerateDeviceExtensionProperties();
-
-  if (std::ranges::none_of(available_extensions, [](const vk::ExtensionProperties& properties) {
-        return std::string_view(properties.extensionName.data()) == vk::KHRSwapchainExtensionName;
-      })) {
+  constexpr std::array required_extensions = {vk::KHRSwapchainExtensionName};
+  const bool all_extensions_supported =
+      std::ranges::all_of(required_extensions, [&](const std::string_view required_name) {
+        return std::ranges::any_of(available_extensions, [&](const vk::ExtensionProperties& prop) {
+          return std::string_view(prop.extensionName.data()) == required_name;
+        });
+      });
+  if (!all_extensions_supported) {
     return false;
   }
 
@@ -62,7 +66,11 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
 
   if (!features.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageReadWithoutFormat ||
       !features.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat ||
-      !features.get<vk::PhysicalDeviceFeatures2>().features.wideLines) {
+      !features.get<vk::PhysicalDeviceFeatures2>().features.wideLines ||
+      !features.get<vk::PhysicalDeviceFeatures2>().features.depthClamp ||
+      !features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy ||
+      !features.get<vk::PhysicalDeviceFeatures2>().features.multiDrawIndirect ||
+      !features.get<vk::PhysicalDeviceFeatures2>().features.depthBiasClamp) {
     return false;
   }
 
@@ -135,6 +143,10 @@ void Device::create_device()
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageReadWithoutFormat = vk::True;
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat = vk::True;
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.wideLines = vk::True;
+  feature_chain.get<vk::PhysicalDeviceFeatures2>().features.depthClamp = vk::True;
+  feature_chain.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy = vk::True;
+  feature_chain.get<vk::PhysicalDeviceFeatures2>().features.multiDrawIndirect = vk::True;
+  feature_chain.get<vk::PhysicalDeviceFeatures2>().features.depthBiasClamp = vk::True;
 
   vk::DeviceCreateInfo create_info{};
   create_info.setPNext(&feature_chain.get<vk::PhysicalDeviceFeatures2>());

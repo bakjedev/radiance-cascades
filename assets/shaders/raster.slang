@@ -79,6 +79,8 @@ struct Material {
     uint normal_tex;
     uint occlusion_tex;
     uint emissive_tex;
+    bool alpha_mode;
+    float alpha_cutoff;
 }
 
 [[vk::binding(1, 0)]] StructuredBuffer<Material> storageBuffersMaterial[];
@@ -188,6 +190,9 @@ FSOutput fs_main(VSOutput input, uniform PushConstant pc) {
     emissive *= material.emissive_color;
 
     out.emissive = emissive;
+
+    if (material.alpha_mode)
+        clip(albedo.a - material.alpha_cutoff);
 
     return out;
 }

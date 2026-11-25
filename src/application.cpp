@@ -161,7 +161,7 @@ Scene Application::create_scene()
 {
 #ifdef RENDERER_3D
   const auto gltf_resource = resource_manager_.create_from_file<GLTFResource>(
-      "DamagedHelmet.glb", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
+      "out.gltf", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
   return Scene{gltf_resource};
 #else
   return Scene{{}};
