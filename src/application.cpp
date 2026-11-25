@@ -39,7 +39,7 @@ void Application::run()
 
   while (running) {
     const auto current_time = clock::now();
-    const float delta_time = std::chrono::duration<float>(current_time - last_time).count();
+    [[maybe_unused]] const float delta_time = std::chrono::duration<float>(current_time - last_time).count();
     last_time = current_time;
 
     input_.begin_frame();
