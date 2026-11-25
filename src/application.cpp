@@ -52,10 +52,27 @@ void Application::run()
 
     glm::mat4 projection, view;
 #ifdef RENDERER_3D
-    for (const auto& [transform, mesh_id, camera_id]: scene_.entities()) {
-      if (mesh_id == UINT32_MAX) continue;
-      for (const auto& [range, material]: scene_.resource()->meshes.at(mesh_id).primitives) {
-        renderer_.draw_geometry({range, material, transform});
+    for (const auto& [transform, mesh_id, _, light_id]: scene_.entities()) {
+      if (mesh_id != UINT32_MAX) {
+        for (const auto& [range, material]: scene_.resource()->meshes.at(mesh_id).primitives) {
+          renderer_.submit_geometry({range, material, transform});
+        }
+      }
+
+      if (light_id != UINT32_MAX) {
+        std::visit(
+            [&]<typename T>(const T& light) {
+              const auto position = glm::vec3(transform[3]);
+              if constexpr (std::is_same_v<T, Scene::PointLight>) {
+                renderer_.submit_light(PointLightSubmission{position, light.color * light.intensity, light.range});
+              } else if constexpr (std::is_same_v<T, Scene::SpotLight>) {
+                renderer_.submit_light(SpotLightSubmission{{position, light.color * light.intensity, light.range},
+                                                           -glm::vec3(transform[2]),
+                                                           std::cos(light.inner_cone),
+                                                           std::cos(light.outer_cone)});
+              }
+            },
+            scene_.lights().at(light_id));
       }
     }
 
@@ -65,16 +82,14 @@ void Application::run()
       const auto& cam_entity = scene_.entities().at(*active_camera);
       view = glm::inverse(cam_entity.transform);
 
-      const auto& [type, y_fov, x_mag, y_mag, z_near, z_far] = scene_.cameras().at(cam_entity.camera_id);
+      const auto& camera = scene_.cameras().at(cam_entity.camera_id);
       const float aspect = static_cast<float>(window_.width()) / static_cast<float>(window_.height());
 
-      switch (type) {
-        case Scene::Camera::Type::Perspective:
-          projection = perspective_vk_rev_z(y_fov, aspect, z_near, z_far);
-          break;
-        case Scene::Camera::Type::Orthographic:
-          projection = ortho_vk_rev_z(x_mag, y_mag, z_near, *z_far);
-          break;
+      if (auto* perspective = std::get_if<Scene::PerspectiveCamera>(&camera)) {
+        projection = perspective_vk_rev_z(perspective->y_fov, aspect, perspective->z_near, perspective->z_far);
+      } else if (auto* orthographic = std::get_if<Scene::OrthoGraphicCamera>(&camera)) {
+        projection =
+            ortho_vk_rev_z(orthographic->x_mag, orthographic->y_mag, orthographic->z_near, *orthographic->z_far);
       }
     }
 #else
@@ -161,7 +176,7 @@ Scene Application::create_scene()
 {
 #ifdef RENDERER_3D
   const auto gltf_resource = resource_manager_.create_from_file<GLTFResource>(
-      "out.gltf", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
+      "HelmetWithLight.glb", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
   return Scene{gltf_resource};
 #else
   return Scene{{}};

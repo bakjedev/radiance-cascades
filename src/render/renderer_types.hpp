@@ -75,3 +75,14 @@ struct GeometrySubmission {
   GPUMaterial material;
   glm::mat4 transform;
 };
+
+struct LightSubmission {
+  glm::vec3 position;
+  glm::vec3 radiance;
+  float range;
+};
+struct PointLightSubmission : LightSubmission {};
+struct SpotLightSubmission : LightSubmission {
+  glm::vec3 direction;
+  float cos_inner, cos_outer;
+};

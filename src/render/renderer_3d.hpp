@@ -13,10 +13,19 @@ public:
   GPUMaterial create_material(const MaterialInfo& material);
   void upload_vertices(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
 
-  void draw_geometry(const GeometrySubmission& submission);
+  void submit_geometry(const GeometrySubmission& submission);
+  void submit_light(const PointLightSubmission& submission);
+  void submit_light(const SpotLightSubmission& submission);
 
 private:
   static constexpr uint32_t max_geometries = 1 << 16;
+
+  static constexpr uint32_t max_point_lights = 512;
+  static constexpr uint32_t max_spot_lights = 512;
+  static constexpr uint32_t max_lights = max_point_lights + max_spot_lights;
+
+  static constexpr uint32_t max_point_shadows = 4;
+  static constexpr uint32_t max_spot_shadows = 4;
 
   static constexpr uint32_t MaterialTextureBits = 23;
   static constexpr uint32_t MaterialTextureMask = (1u << MaterialTextureBits) - 1;
@@ -53,16 +62,29 @@ private:
     alignas(16) GPUMaterial material;
   };
 
+  struct Light {
+    glm::vec3 position;
+    float range;
+    glm::vec3 direction;
+    float angle_size;
+    glm::vec3 radiance;
+    float angle_offset;
+  };
+
   struct FrameData {
     glm::mat4 inv_view_proj;
-    alignas(16) glm::vec3 camera_pos;
-    alignas(16) glm::vec3 sun_dir;
-    alignas(16) glm::vec3 sun_color;
-    alignas(16) glm::vec3 ambient;
+    glm::vec3 camera_pos;
+    uint32_t point_light_count;
+    glm::vec3 sun_dir;
+    uint32_t spot_light_count;
+    glm::vec3 sun_color;
+    uint32_t point_lights_base;
+    glm::vec3 ambient;
+    uint32_t spot_lights_base;
     alignas(16) glm::vec3 ambient_indirect;
   };
 
-  struct Cascades {
+  struct CascadedShadows {
     static constexpr auto Resolution = 2048;
     static constexpr auto Count = 4;
     static constexpr auto Distance = 150.0f;
@@ -88,9 +110,13 @@ private:
   std::optional<Buffer> indirect_buffer_;
   std::optional<Buffer> geometries_buffer_;
 
+  std::vector<Light> point_lights_;
+  std::vector<Light> spot_lights_;
+  std::optional<Buffer> lights_buffer_;
+
   std::optional<Buffer> ubo_buffer_;
   FrameData frame_data_{};
-  Cascades cascades_{};
+  CascadedShadows cascades_{};
   vk::DeviceSize frame_data_size_{};
   vk::DeviceSize cascades_size_{};
   vk::DeviceSize cascades_base_{};
@@ -150,6 +176,8 @@ private:
   void blit_pass(vk::CommandBuffer cmd) const;
 
   void upload_geometry();
+
+  void upload_lights();
 
   void upload_materials();
 

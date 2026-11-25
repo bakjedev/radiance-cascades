@@ -6,6 +6,7 @@ struct PushConstant {
     uint cascades_id;
     uint shadow_id;
     uint shadow_sampler_id;
+    uint lights_id;
     uint albedo_id;
     uint normal_id;
     uint pbr_id;
@@ -16,10 +17,23 @@ struct PushConstant {
 struct FrameData {
     float4x4 inv_view_proj;
     float3 camera_pos;
+    uint point_light_count;
     float3 sun_dir;
+    uint spot_light_count;
     float3 sun_color;
+    uint point_lights_base;
     float3 ambient;
+    uint spot_lights_base;
     float3 ambient_indirect;
+}
+
+struct Light {
+    float3 position;
+    float range;
+    float3 direction;
+    float angle_size;
+    float3 radiance;
+    float angle_offset;
 }
 
 struct Cascades {
@@ -37,6 +51,7 @@ struct Fragment {
 }
 
 [[vk::binding(0, 0)]] RWTexture2D<float4> storageImagesF[];
+[[vk::binding(1, 0)]] StructuredBuffer<Light> lightBuffers[];
 [[vk::binding(2, 0)]] Texture2D textures[];
 [[vk::binding(2, 0)]] Texture2DArray textureArrays[];
 [[vk::binding(4, 0)]] ConstantBuffer<FrameData> frameDataUBOs[];
@@ -87,7 +102,7 @@ float3 F_Schlick(float VoH, float3 f0) {
 
 float Fd_Lambert() { return 1.0 / PI; }
 
-float3 evaluate(Fragment frag, float3 light) {
+float3 evaluate_brdf(Fragment frag, float3 light) {
     float3 H  = normalize(frag.dir + light);
     float NoV = abs(dot(frag.normal, frag.dir)) + 1e-5;
     float NoL = saturate(dot(frag.normal, light));
@@ -108,42 +123,66 @@ float3 evaluate(Fragment frag, float3 light) {
     return (Fd + Fr) * NoL;
 }
 
-    float interleaved_gradient_noise(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }
+float distance_falloff(float distance_sq, float inv_range) {
+    float norm_distance_sq = distance_sq * inv_range * inv_range;
+    float window = saturate(1.0 - norm_distance_sq * norm_distance_sq);
+    return (window * window) / max(distance_sq, 1e-4);
+}
 
-    float pcf_poisson(Texture2DArray shadow_map, SamplerComparisonState shadow_sampler, float2 uv, float layer, float depth, float radius_uv, float2 pixel) {
-        float rotation_angle = interleaved_gradient_noise(pixel) * 2.0 * PI;
-        float sin_angle, cos_angle;
-        sincos(rotation_angle, sin_angle, cos_angle);
-        float2x2 rotation = float2x2(cos_angle, -sin_angle, sin_angle, cos_angle);
+float3 evaluate_point_light(Fragment fragment, Light light, float3 world) {
+    float3 distance = light.position - world;
+    float  distance_sq = dot(distance, distance);
+    float3 dir = distance * rsqrt(distance_sq);
+    return evaluate_brdf(fragment, dir) * light.radiance * distance_falloff(distance_sq, 1.0 / light.range);
+}
 
-        float sum = 0.0;
-        [unroll]
-        for (uint i = 0; i < 16; ++i) {
-            float2 offset = mul(rotation, POISSON_DISK[i]) * radius_uv;
-            sum += shadow_map.SampleCmpLevelZero(shadow_sampler, float3(uv + offset, layer), depth);
-        }
-        return sum * (1.0 / 16.0);
+float3 evaluate_spot_light(Fragment fragment, Light light, float3 world) {
+    float3 distance = light.position - world;
+    float  distance_sq = dot(distance, distance);
+    float3 dir = distance * rsqrt(distance_sq);
+
+    float angle = saturate(dot(light.direction, -dir) * light.angle_size + light.angle_offset);
+    angle *= angle;
+
+    return evaluate_brdf(fragment, dir) * light.radiance * distance_falloff(distance_sq, 1.0 / light.range) * angle;
+}
+
+float interleaved_gradient_noise(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }
+
+float pcf_poisson(Texture2DArray shadow_map, SamplerComparisonState shadow_sampler, float2 uv, float layer, float depth, float radius_uv, float2 pixel) {
+    float rotation_angle = interleaved_gradient_noise(pixel) * 2.0 * PI;
+    float sin_angle, cos_angle;
+    sincos(rotation_angle, sin_angle, cos_angle);
+    float2x2 rotation = float2x2(cos_angle, -sin_angle, sin_angle, cos_angle);
+
+    float sum = 0.0;
+    [unroll]
+    for (uint i = 0; i < 16; ++i) {
+        float2 offset = mul(rotation, POISSON_DISK[i]) * radius_uv;
+        sum += shadow_map.SampleCmpLevelZero(shadow_sampler, float3(uv + offset, layer), depth);
     }
+    return sum * (1.0 / 16.0);
+}
 
-    float visibility(Cascades cascades, Texture2DArray shadow_map, SamplerComparisonState shadow_sampler, float3 world, float3 normal, float n_dot_l, float2 pixel) {
-        const float radius_uv = FILTER_TEXELS / SHADOW_RES;
-        const float margin_uv = (FILTER_TEXELS + 1.0) / SHADOW_RES;
+float visibility(Cascades cascades, Texture2DArray shadow_map, SamplerComparisonState shadow_sampler, float3 world, float3 normal, float n_dot_l, float2 pixel) {
+    const float radius_uv = FILTER_TEXELS / SHADOW_RES;
+    const float margin_uv = (FILTER_TEXELS + 1.0) / SHADOW_RES;
 
-        for (uint i = 0; i < 4; i++) {
-            float world_units_per_texel = cascades.world_units_per_texel[i];
-            float normal_offset_distance = world_units_per_texel * NORMAL_OFFSET_TEXELS * (1.0 - n_dot_l);
-            float3 lookup_position = world + normal * normal_offset_distance;
+    for (uint i = 0; i < 4; i++) {
+        float world_units_per_texel = cascades.world_units_per_texel[i];
+        float normal_offset_distance = world_units_per_texel * NORMAL_OFFSET_TEXELS * (1.0 - n_dot_l);
+        float3 lookup_position = world + normal * normal_offset_distance;
 
-            float3 shadow_ndc = mul(cascades.world_to_shadow_clip[i], float4(lookup_position, 1.0)).xyz;
-            float2 shadow_uv = shadow_ndc.xy * 0.5 + 0.5;
+        float3 shadow_ndc = mul(cascades.world_to_shadow_clip[i], float4(lookup_position, 1.0)).xyz;
+        float2 shadow_uv = shadow_ndc.xy * 0.5 + 0.5;
 
-            bool inside_this_cascade = all(shadow_uv >= margin_uv) && all(shadow_uv <= 1.0 - margin_uv) && shadow_ndc.z >= 0.0 && shadow_ndc.z <= 1.0;
-            if (!inside_this_cascade) continue;
+        bool inside_this_cascade = all(shadow_uv >= margin_uv) && all(shadow_uv <= 1.0 - margin_uv) && shadow_ndc.z >= 0.0 && shadow_ndc.z <= 1.0;
+        if (!inside_this_cascade) continue;
 
-            return pcf_poisson(shadow_map, shadow_sampler, shadow_uv, i, shadow_ndc.z, radius_uv, pixel);
-        }
-        return 1.0;
+        return pcf_poisson(shadow_map, shadow_sampler, shadow_uv, i, shadow_ndc.z, radius_uv, pixel);
     }
+    return 1.0;
+}
 
 [shader("compute")]
 [numthreads(8, 8)]
@@ -191,7 +230,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
                                                  shadowSamplers[pc.shadow_sampler_id],
                                                  world.xyz, fragment.normal, n_dot_l, float2(local)) : 0.0;
 
-    color += evaluate(fragment, frame_data.sun_dir) * frame_data.sun_color * visibility;
+    color += evaluate_brdf(fragment, frame_data.sun_dir) * frame_data.sun_color * visibility;
+
+    for (uint i = 0; i < frame_data.point_light_count; ++i)
+        color += evaluate_point_light(fragment, lightBuffers[pc.lights_id][frame_data.point_lights_base + i], world.xyz);
+    for (uint i = 0; i < frame_data.spot_light_count; ++i)
+        color += evaluate_spot_light(fragment, lightBuffers[pc.lights_id][frame_data.spot_lights_base + i], world.xyz);
 
     float3 ambient = lerp(frame_data.ambient_indirect, frame_data.ambient, fragment.normal.y * 0.5 + 0.5);
     color += ambient * fragment.color * (1.0 - fragment.metallic) * fragment.ao;

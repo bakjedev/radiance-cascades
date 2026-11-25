@@ -24,7 +24,7 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
     throw std::runtime_error("The glTF file couldn't be loaded, or the buffer could not be allocated.");
   }
 
-  fastgltf::Parser parser;
+  fastgltf::Parser parser{fastgltf::Extensions::KHR_lights_punctual};
 
   auto asset = parser.loadGltf(data.get(), full_path.parent_path(), fastgltf::Options::LoadExternalBuffers);
   if (const auto error = asset.error(); error != fastgltf::Error::None) {

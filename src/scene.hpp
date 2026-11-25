@@ -1,4 +1,7 @@
 #pragma once
+#include <variant>
+
+
 #include "resource/resource.hpp"
 #include "resource/types/gltf_resource.hpp"
 
@@ -8,21 +11,38 @@ public:
     glm::mat4 transform;
     uint32_t mesh_id;
     uint32_t camera_id;
+    uint32_t light_id;
   };
 
-  struct Camera {
-    enum class Type : uint8_t { Perspective, Orthographic };
-    Type type;
-    float y_fov;
-    float x_mag, y_mag;
+  struct CameraBase {
     float z_near;
     std::optional<float> z_far;
   };
+  struct PerspectiveCamera : CameraBase {
+    float y_fov;
+  };
+  struct OrthoGraphicCamera : CameraBase {
+    float x_mag, y_mag;
+  };
+  using Camera = std::variant<PerspectiveCamera, OrthoGraphicCamera>;
+
+  struct LightBase {
+    glm::vec3 color;
+    float intensity;
+    float range;
+  };
+  struct PointLight : LightBase {};
+  struct SpotLight : LightBase {
+    float inner_cone;
+    float outer_cone;
+  };
+  using Light = std::variant<PointLight, SpotLight>;
 
   explicit Scene(const ResourceHandle<GLTFResource>& resource);
 
   [[nodiscard]] auto& entities() { return entities_; }
   [[nodiscard]] auto& cameras() { return cameras_; }
+  [[nodiscard]] auto& lights() { return lights_; }
   [[nodiscard]] const auto& resource() const { return scene_resource_; }
   [[nodiscard]] auto active_camera()
   {
@@ -34,5 +54,6 @@ private:
   std::vector<Entity> entities_;
 
   std::vector<Camera> cameras_;
+  std::vector<Light> lights_;
   uint32_t active_camera_;
 };

@@ -28,6 +28,7 @@ namespace {
     uint32_t cascades_id;
     uint32_t shadow_id;
     uint32_t shadow_sampler_id;
+    uint32_t lights_id;
     uint32_t albedo_id;
     uint32_t normal_id;
     uint32_t pbr_id;
@@ -54,6 +55,7 @@ namespace {
   enum BufferDescriptors {
     GeometriesBuffer = 0,
     MaterialBuffer,
+    LightsBuffer,
   };
 
   enum SamplerDescriptors {
@@ -91,9 +93,17 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
                                                        VMA_ALLOCATION_CREATE_MAPPED_BIT,
                                         .debug_name = "Geometries buffer"});
 
+  lights_buffer_.emplace(device_.get_allocator(), device_.get(),
+                         BufferDesc{.size = sizeof(Light) * max_lights * frames_in_flight,
+                                    .usage = vk::BufferUsageFlagBits::eStorageBuffer,
+                                    .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                                    .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                                   VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                                    .debug_name = "Lights buffer"});
+
   const auto ubo_alignment = device_.get_physical().getProperties().limits.minUniformBufferOffsetAlignment;
   frame_data_size_ = (sizeof(FrameData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
-  cascades_size_ = (sizeof(Cascades) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+  cascades_size_ = (sizeof(CascadedShadows) + ubo_alignment - 1) & ~(ubo_alignment - 1);
   constexpr auto frame_data_base = static_cast<vk::DeviceSize>(0);
   cascades_base_ = frame_data_size_ * frames_in_flight;
 
@@ -109,17 +119,17 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
       device_.get_allocator(), device_.get(),
       ImageDesc{}
           .set_format(vk::Format::eD32Sfloat)
-          .set_extent(Cascades::Resolution, Cascades::Resolution)
-          .set_layers(Cascades::Count)
+          .set_extent(CascadedShadows::Resolution, CascadedShadows::Resolution)
+          .set_layers(CascadedShadows::Count)
           .set_usage(vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled)
           .set_debug_name("Shadow Image"));
   shadow_view_ =
       shadow_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eDepth, vk::ImageViewType::e2DArray);
   shadow_id_ = context_.import_image({.type = VK_IMAGE_TYPE_2D,
-                                      .size = {Cascades::Resolution, Cascades::Resolution, 1},
+                                      .size = {CascadedShadows::Resolution, CascadedShadows::Resolution, 1},
                                       .format = VK_FORMAT_D32_SFLOAT,
                                       .mip_count = 1,
-                                      .layer_count = Cascades::Count,
+                                      .layer_count = CascadedShadows::Count,
                                       .state = fwrk::PhysicalState::Undefined},
                                      shadow_image_->image(), "Shadow Image");
 
@@ -284,6 +294,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
   DescriptorWriter{}
       .add_buffer(1, GeometriesBuffer, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer())
+      .add_buffer(1, LightsBuffer, vk::DescriptorType::eStorageBuffer, lights_buffer_->buffer())
       .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .add_image(3, ShadowSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
                  shadow_sampler_.get())
@@ -322,6 +333,8 @@ void Renderer3D::render(RenderInfo info)
   }
 
   upload_geometry();
+
+  upload_lights();
 
   update_frame_data();
 
@@ -482,7 +495,20 @@ void Renderer3D::upload_vertices(const std::vector<Vertex>& vertices, const std:
   });
 }
 
-void Renderer3D::draw_geometry(const GeometrySubmission& submission) { geometry_submissions_.push_back(submission); }
+void Renderer3D::submit_geometry(const GeometrySubmission& submission) { geometry_submissions_.push_back(submission); }
+
+void Renderer3D::submit_light(const PointLightSubmission& submission)
+{
+  point_lights_.emplace_back(submission.position, submission.range, glm::vec3(0.0f), 0.0f, submission.radiance, 1.0f);
+}
+
+void Renderer3D::submit_light(const SpotLightSubmission& submission)
+{
+  assert(submission.cos_inner >= submission.cos_outer);
+  const auto angle_size = 1.0f / std::max(0.001f, submission.cos_inner - submission.cos_outer);
+  spot_lights_.emplace_back(submission.position, submission.range, glm::normalize(submission.direction), angle_size,
+                            submission.radiance, -submission.cos_outer * angle_size);
+}
 
 void Renderer3D::compile()
 {
@@ -503,7 +529,7 @@ void Renderer3D::compile()
           {.resource = {.id = depth_id_}, .load_op = fwrk::LoadOp::Clear, .store_op = fwrk::StoreOp::Store})
       .set_execute([this](vk::CommandBuffer cmd) { raster_pass(cmd); });
 
-  for (uint32_t i = 0; i < Cascades::Count; i++) {
+  for (uint32_t i = 0; i < CascadedShadows::Count; i++) {
     graph.add_graphics_pass(std::format("Shadow Cascade {}", i))
         .set_depth_attachment({.resource = {.id = shadow_id_},
                                .load_op = fwrk::LoadOp::Clear,
@@ -590,12 +616,14 @@ void Renderer3D::shadow_pass(vk::CommandBuffer cmd, const uint32_t cascade) cons
                          &bindless_descriptor_set_, 0, nullptr);
 
   constexpr vk::Viewport viewport{
-      0.0f, 0.0f, static_cast<float>(Cascades::Resolution), static_cast<float>(Cascades::Resolution), 0.0f, 1.0f};
+      0.0f, 0.0f, static_cast<float>(CascadedShadows::Resolution), static_cast<float>(CascadedShadows::Resolution),
+      0.0f, 1.0f};
   cmd.setViewport(0, 1, &viewport);
-  constexpr vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{Cascades::Resolution, Cascades::Resolution}};
+  constexpr vk::Rect2D scissor{vk::Offset2D{0, 0},
+                               vk::Extent2D{CascadedShadows::Resolution, CascadedShadows::Resolution}};
   cmd.setScissor(0, 1, &scissor);
 
-  cmd.setDepthBias(0.0f, 4.0f / static_cast<float>(Cascades::Resolution), Cascades::FilterTexels + 1.0f);
+  cmd.setDepthBias(0.0f, 4.0f / static_cast<float>(CascadedShadows::Resolution), CascadedShadows::FilterTexels + 1.0f);
 
   const ShadowPushConstant push_constant{
       .cascade = cascade, .cascades_id = CascadesUBO * 2 + current_frame_, .geometries_id = GeometriesBuffer};
@@ -625,6 +653,7 @@ void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
                                             .cascades_id = CascadesUBO * 2 + current_frame_,
                                             .shadow_id = ShadowTexture,
                                             .shadow_sampler_id = ShadowSampler,
+                                            .lights_id = LightsBuffer,
                                             .albedo_id = AlbedoTexture,
                                             .normal_id = NormalTexture,
                                             .pbr_id = PBRTexture,
@@ -685,6 +714,27 @@ void Renderer3D::upload_geometry()
     geometries_mapping[i] = Geometry{.transform = transform, .material = material};
   }
   geometry_submissions_.clear();
+}
+
+void Renderer3D::upload_lights()
+{
+  constexpr auto lights_region = sizeof(Light) * max_lights;
+
+  auto* lights_mapping =
+      reinterpret_cast<Light*>(lights_buffer_->get_mapped_data<std::byte>() + lights_region * current_frame_);
+
+  const auto point_count = static_cast<uint32_t>(std::min<size_t>(point_lights_.size(), max_point_lights));
+  const auto spot_count = static_cast<uint32_t>(std::min<size_t>(spot_lights_.size(), max_spot_lights));
+
+  std::memcpy(lights_mapping, point_lights_.data(), point_count * sizeof(Light));
+  std::memcpy(lights_mapping + max_point_lights, spot_lights_.data(), spot_count * sizeof(Light));
+
+  frame_data_.point_light_count = point_count;
+  frame_data_.spot_light_count = spot_count;
+  frame_data_.point_lights_base = max_lights * current_frame_;
+  frame_data_.spot_lights_base = max_lights * current_frame_ + max_point_lights;
+  point_lights_.clear();
+  spot_lights_.clear();
 }
 
 void Renderer3D::upload_materials()
@@ -883,11 +933,11 @@ void Renderer3D::update_cascades()
   const glm::mat4 light_view = glm::lookAt(glm::vec3(0.0f), -frame_data_.sun_dir, up);
 
   float slice_near = near_plane;
-  for (uint32_t i = 0; i < Cascades::Count; i++) {
-    const float split_fraction = static_cast<float>(i + 1) / static_cast<float>(Cascades::Count);
-    const float uniform_split = near_plane + (Cascades::Distance - near_plane) * split_fraction;
-    const float log_split = near_plane * std::pow(Cascades::Distance / near_plane, split_fraction);
-    const float slice_far = glm::mix(uniform_split, log_split, Cascades::Lambda);
+  for (uint32_t i = 0; i < CascadedShadows::Count; i++) {
+    const float split_fraction = static_cast<float>(i + 1) / static_cast<float>(CascadedShadows::Count);
+    const float uniform_split = near_plane + (CascadedShadows::Distance - near_plane) * split_fraction;
+    const float log_split = near_plane * std::pow(CascadedShadows::Distance / near_plane, split_fraction);
+    const float slice_far = glm::mix(uniform_split, log_split, CascadedShadows::Lambda);
 
     float sphere_center_depth;
     float sphere_radius;
@@ -906,7 +956,7 @@ void Renderer3D::update_cascades()
 
     auto sphere_center_light_view = glm::vec3(light_view * glm::vec4(sphere_center, 1.0f));
 
-    const float world_units_per_texel = 2.0f * sphere_radius / static_cast<float>(Cascades::Resolution);
+    const float world_units_per_texel = 2.0f * sphere_radius / static_cast<float>(CascadedShadows::Resolution);
     sphere_center_light_view.x = std::floor(sphere_center_light_view.x / world_units_per_texel) * world_units_per_texel;
     sphere_center_light_view.y = std::floor(sphere_center_light_view.y / world_units_per_texel) * world_units_per_texel;
 
@@ -926,7 +976,7 @@ void Renderer3D::update_cascades()
   }
 
   std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + cascades_base_ + cascades_size_ * current_frame_, &cascades_,
-              sizeof(Cascades));
+              sizeof(CascadedShadows));
 }
 
 uint32_t Renderer3D::pack_texture_index(const MaterialInfo::Textures::Texture& texture)
