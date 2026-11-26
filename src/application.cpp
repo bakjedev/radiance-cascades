@@ -22,8 +22,6 @@ void Application::run()
 {
   event_dispatcher_.listen<QuitEvent>([this](const QuitEvent&) { running = false; });
 
-  file_system_.add_route("assets", "../assets");
-
 #ifdef RENDERER_3D
   CameraFly camera_fly{};
   if (const auto camera = scene_.active_camera()) {
@@ -31,7 +29,7 @@ void Application::run()
   }
 #else
   auto texture_resource = resource_manager_.create_from_file<ImageResource>(
-      "image.png", ImageResourceLoader{&file_system_, &renderer_}, ImageColorSpace::sRGB);
+      "assets:textures/image.png", ImageResourceLoader{&file_system_, &renderer_}, ImageColorSpace::sRGB);
 #endif
 
   using clock = std::chrono::high_resolution_clock;
@@ -151,6 +149,8 @@ void Application::poll_events()
 
 ActiveRenderer Application::create_renderer()
 {
+  file_system_.add_route("assets", "assets/");
+  
   uint32_t sdl_instance_extension_count = 0;
   const auto* const sdl_instance_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_instance_extension_count);
 
@@ -176,7 +176,7 @@ Scene Application::create_scene()
 {
 #ifdef RENDERER_3D
   const auto gltf_resource = resource_manager_.create_from_file<GLTFResource>(
-      "HelmetWithLight.glb", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
+      "assets:models/sponza.gltf", GLTFResourceLoader{&file_system_, &resource_manager_, &renderer_});
   return Scene{gltf_resource};
 #else
   return Scene{{}};

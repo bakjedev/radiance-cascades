@@ -154,7 +154,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
     vk::PushConstantRange raster_push{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
                                       sizeof(RasterPushConstant)};
 
-    const auto raster_shader = create_info.load_shader("raster.slang.spv");
+    const auto raster_shader = create_info.load_shader("assets:/shaders/raster.spv");
     raster_shader_module_ = create_shader_module(device_.get(), raster_shader);
 
     raster_pipeline_layout_ =
@@ -201,7 +201,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange shadow_push{vk::ShaderStageFlagBits::eVertex, 0, sizeof(ShadowPushConstant)};
 
-    const auto shadow_shader = create_info.load_shader("shadow.slang.spv");
+    const auto shadow_shader = create_info.load_shader("assets:/shaders/shadow.spv");
     shadow_shader_module_ = create_shader_module(device_.get(), shadow_shader);
 
     shadow_pipeline_layout_ =
@@ -241,7 +241,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
 
-    const auto composite_shader = create_info.load_shader("composite3d.slang.spv");
+    const auto composite_shader = create_info.load_shader("assets:/shaders/composite3d.spv");
     composite_shader_module_ = create_shader_module(device_.get(), composite_shader);
 
     composite_pipeline_layout_ =
@@ -259,7 +259,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange blit_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant)};
 
-    const auto blit_shader = create_info.load_shader("blit.slang.spv");
+    const auto blit_shader = create_info.load_shader("assets:/shaders/blit.spv");
     blit_shader_module_ = create_shader_module(device_.get(), blit_shader);
 
     blit_pipeline_layout_ =

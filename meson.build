@@ -54,38 +54,26 @@ sources = files(
     'src/user_interface.cpp',
 )
 
+py = import('python').find_installation('python3')
 slangc = find_program('slangc')
 
-shaders = [
-    'draw.slang',
-    'convert.slang',
-    'sprite.slang',
-    'jfa.slang',
-    'sdf.slang',
-    'cascades.slang',
-    'light.slang',
-    'composite.slang',
-    'blit.slang',
-    'blur.slang',
-    'imgui.slang',
-    'raster.slang',
-    'shadow.slang',
-    'composite3d.slang'
-]
+slang_args = ['-target', 'spirv', '-matrix-layout-column-major', '-g2', '-O3']
 
-compiled_shaders = []
-foreach shader : shaders
-    compiled_shaders += custom_target(
-        shader + '.spv',
-        input : 'assets/shaders' / shader,
-        output : shader + '.spv',
-        command : [slangc, '@INPUT@', '-target', 'spirv', '-matrix-layout-column-major', '-g2', '-O3', '-o', '@OUTPUT@'],
-        build_by_default : true,
-    )
-endforeach
+assets = custom_target('assets',
+                       output : 'assets.stamp',
+                       command : [py, files('scripts/build_assets.py'),
+                                  '--src', meson.project_source_root() / 'assets',
+                                  '--dst', meson.project_build_root() / 'assets',
+                                  '--slangc', slangc,
+                                  '--stamp', '@OUTPUT@',
+                                  '--slangc-args', slang_args],
+                       build_by_default : true,
+                       build_always_stale : true,
+                       console : true,
+)
 
-executable('radiance-cascades', sources, compiled_shaders, dependencies : [framework_dep, vulkan_dep,
-                                                                           sdl3_dep, vma_dep,
-                                                                           imgui_dep, implot_dep,
-                                                                           glm_dep, stb_dep,
-                                                                           fastgltf_dep])
+executable('radiance-cascades', sources, assets, dependencies : [framework_dep, vulkan_dep,
+                                                                 sdl3_dep, vma_dep,
+                                                                 imgui_dep, implot_dep,
+                                                                 glm_dep, stb_dep,
+                                                                 fastgltf_dep])

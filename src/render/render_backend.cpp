@@ -78,7 +78,7 @@ RenderBackend::RenderBackend(const RendererCreateInfo& create_info) :
   std::array imgui_format{static_cast<VkFormat>(swapchain_.format())};
   imgui_vulkan_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = imgui_format.data();
 
-  auto imgui_shader = create_info.load_shader("imgui.slang.spv");
+  auto imgui_shader = create_info.load_shader("assets:shaders/imgui.spv");
   imgui_vulkan_info.CustomShaderVertCreateInfo = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0U,
                                                   imgui_shader.size(),
                                                   reinterpret_cast<const uint32_t*>(imgui_shader.data())};

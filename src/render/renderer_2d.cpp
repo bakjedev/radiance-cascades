@@ -226,7 +226,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange draw_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(DrawPushConstant)};
 
-    const auto draw_shader = create_info.load_shader("draw.slang.spv");
+    const auto draw_shader = create_info.load_shader("assets:/shaders/draw.spv");
     draw_shader_module_ = create_shader_module(device_.get(), draw_shader);
 
     draw_pipeline_layout_ =
@@ -245,7 +245,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange convert_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(ConvertPushConstant)};
 
-    const auto convert_shader = create_info.load_shader("convert.slang.spv");
+    const auto convert_shader = create_info.load_shader("assets:/shaders/convert.spv");
     convert_shader_module_ = create_shader_module(device_.get(), convert_shader);
 
     convert_pipeline_layout_ =
@@ -276,7 +276,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange sprite_push{vk::ShaderStageFlagBits::eVertex, 0, sizeof(SpritePushConstant)};
 
-    const auto sprite_shader = create_info.load_shader("sprite.slang.spv");
+    const auto sprite_shader = create_info.load_shader("assets:/shaders/sprite.spv");
     sprite_shader_module_ = create_shader_module(device_.get(), sprite_shader);
 
     sprite_pipeline_layout_ =
@@ -308,7 +308,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange jfa_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(JFAPushConstant)};
 
-    const auto jfa_shader = create_info.load_shader("jfa.slang.spv");
+    const auto jfa_shader = create_info.load_shader("assets:/shaders/jfa.spv");
     jfa_shader_module_ = create_shader_module(device_.get(), jfa_shader);
 
     jfa_pipeline_layout_ =
@@ -326,7 +326,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange sdf_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(SDFPushConstant)};
 
-    const auto sdf_shader = create_info.load_shader("sdf.slang.spv");
+    const auto sdf_shader = create_info.load_shader("assets:/shaders/sdf.spv");
     sdf_shader_module_ = create_shader_module(device_.get(), sdf_shader);
 
     sdf_pipeline_layout_ =
@@ -344,7 +344,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange cascades_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CascadesPushConstant)};
 
-    const auto cascades_shader = create_info.load_shader("cascades.slang.spv");
+    const auto cascades_shader = create_info.load_shader("assets:/shaders/cascades.spv");
     cascades_shader_module_ = create_shader_module(device_.get(), cascades_shader);
 
     cascades_pipeline_layout_ =
@@ -363,7 +363,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange light_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(LightPushConstant)};
 
-    const auto light_shader = create_info.load_shader("light.slang.spv");
+    const auto light_shader = create_info.load_shader("assets:/shaders/light.spv");
     light_shader_module_ = create_shader_module(device_.get(), light_shader);
 
     light_pipeline_layout_ =
@@ -383,7 +383,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
     vk::PushConstantRange blur_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurPushConstant)};
     vk::PushConstantRange blur_resolve_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(BlurResolvePushConstant)};
 
-    const auto blur_shader = create_info.load_shader("blur.slang.spv");
+    const auto blur_shader = create_info.load_shader("assets:/shaders/blur.spv");
     blur_shader_module_ = create_shader_module(device_.get(), blur_shader);
 
     blur_pipeline_layout_ =
@@ -419,7 +419,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
 
-    const auto composite_shader = create_info.load_shader("composite.slang.spv");
+    const auto composite_shader = create_info.load_shader("assets:/shaders/composite.spv");
     composite_shader_module_ = create_shader_module(device_.get(), composite_shader);
 
     composite_pipeline_layout_ =
@@ -438,7 +438,7 @@ Renderer2D::Renderer2D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange blit_push{vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant)};
 
-    const auto blit_shader = create_info.load_shader("blit.slang.spv");
+    const auto blit_shader = create_info.load_shader("assets:/shaders/blit.spv");
     blit_shader_module_ = create_shader_module(device_.get(), blit_shader);
 
     blit_pipeline_layout_ =

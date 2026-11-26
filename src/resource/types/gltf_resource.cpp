@@ -28,7 +28,8 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
 
   auto asset = parser.loadGltf(data.get(), full_path.parent_path(), fastgltf::Options::LoadExternalBuffers);
   if (const auto error = asset.error(); error != fastgltf::Error::None) {
-    throw std::runtime_error("Some error occurred while reading the buffer, parsing the JSON, or validating the data.");
+    throw std::runtime_error(std::string(fastgltf::getErrorName(asset.error())) + ": " +
+                             std::string(fastgltf::getErrorMessage(asset.error())));
   }
 
   std::vector image_is_srgb(asset->images.size(), false);
@@ -47,7 +48,8 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
                    [&]([[maybe_unused]] const auto& arg) { result.images.emplace_back(); },
                    [&](const fastgltf::sources::URI& uri) {
                      const auto resource = resource_manager->create_from_file<ImageResource>(
-                         std::string(uri.uri->path()), ImageResourceLoader{file_system, renderer}, color_space);
+                         full_path.parent_path().string() + "/" + std::string(uri.uri->path()),
+                         ImageResourceLoader{file_system, renderer}, color_space);
                      result.images.push_back(resource);
                    },
                    [&](const fastgltf::sources::Array& array) {
