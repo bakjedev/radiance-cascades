@@ -73,14 +73,10 @@ private:
 
   struct FrameData {
     glm::mat4 inv_view_proj;
-    glm::vec3 camera_pos;
-    uint32_t point_light_count;
-    glm::vec3 sun_dir;
-    uint32_t spot_light_count;
-    glm::vec3 sun_color;
-    uint32_t point_lights_base;
-    glm::vec3 ambient;
-    uint32_t spot_lights_base;
+    alignas(16) glm::vec3 camera_pos;
+    alignas(16) glm::vec3 sun_dir;
+    alignas(16) glm::vec3 sun_color;
+    alignas(16) glm::vec3 ambient;
     alignas(16) glm::vec3 ambient_indirect;
   };
 
@@ -97,6 +93,15 @@ private:
     float inv_res;
     float blend;
     glm::vec2 pad;
+  };
+
+  struct LightsData {
+    std::array<glm::mat4, max_point_shadows> point_view_proj;
+    std::array<glm::mat4, max_spot_shadows> spot_view_proj;
+    uint32_t point_lights_base;
+    uint32_t spot_lights_base;
+    uint32_t point_light_count;
+    uint32_t spot_light_count;
   };
 
   RenderInfo info_{};
@@ -124,9 +129,12 @@ private:
   std::optional<Buffer> ubo_buffer_;
   FrameData frame_data_{};
   CascadedShadows cascades_{};
+  LightsData lights_data_{};
   vk::DeviceSize frame_data_size_{};
   vk::DeviceSize cascades_size_{};
+  vk::DeviceSize lights_data_size_;
   vk::DeviceSize cascades_base_{};
+  vk::DeviceSize lights_data_base_;
 
   vk::UniqueSampler shadow_sampler_;
 

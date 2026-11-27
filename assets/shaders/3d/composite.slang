@@ -2,8 +2,9 @@
 
 struct PushConstant {
     uint composite_id;
-    uint frame_id;
+    uint frame_data_id;
     uint cascades_id;
+    uint lights_data_id;
     uint shadow_id;
     uint shadow_sampler_id;
     uint lights_id;
@@ -17,14 +18,19 @@ struct PushConstant {
 struct FrameData {
     float4x4 inv_view_proj;
     float3 camera_pos;
-    uint point_light_count;
     float3 sun_dir;
-    uint spot_light_count;
     float3 sun_color;
-    uint point_lights_base;
     float3 ambient;
-    uint spot_lights_base;
     float3 ambient_indirect;
+}
+
+struct LightsData {
+    float4x4 point_view_proj[4];
+    float4x4 spot_view_proj[4];
+    uint point_lights_base;
+    uint spot_lights_base;
+    uint point_light_count;
+    uint spot_light_count;
 }
 
 struct Light {
@@ -59,6 +65,7 @@ struct Fragment {
 [[vk::binding(2, 0)]] Texture2DArray textureArrays[];
 [[vk::binding(4, 0)]] ConstantBuffer<FrameData> frameDataUBOs[];
 [[vk::binding(4, 0)]] ConstantBuffer<Cascades> cascadesUBOs[];
+[[vk::binding(4, 0)]] ConstantBuffer<LightsData> lightsUBOs[];
 [[vk::binding(3, 0)]] SamplerComparisonState shadowSamplers[];
 
 static const uint SHADOW_CASCADE_COUNT = 4;
@@ -222,7 +229,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
         return;
     }
 
-    FrameData frame_data = frameDataUBOs[pc.frame_id];
+    FrameData frame_data = frameDataUBOs[pc.frame_data_id];
     float2 uv = (float2(local) + 0.5) / float2(size);
     float2 ndc_xy = uv * 2.0 - 1.0;
     float4 clip = float4(ndc_xy, depth, 1.0);
@@ -252,10 +259,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
 
     color += evaluate_brdf(fragment, frame_data.sun_dir) * frame_data.sun_color * visibility;
 
-    for (uint i = 0; i < frame_data.point_light_count; ++i)
-        color += evaluate_point_light(fragment, lightBuffers[pc.lights_id][frame_data.point_lights_base + i], world.xyz);
-    for (uint i = 0; i < frame_data.spot_light_count; ++i)
-        color += evaluate_spot_light(fragment, lightBuffers[pc.lights_id][frame_data.spot_lights_base + i], world.xyz);
+    LightsData lights_data = lightsUBOs[pc.lights_data_id];
+    for (uint i = 0; i < lights_data.point_light_count; ++i)
+        color += evaluate_point_light(fragment, lightBuffers[pc.lights_id][lights_data.point_lights_base + i], world.xyz);
+    for (uint i = 0; i < lights_data.spot_light_count; ++i)
+        color += evaluate_spot_light(fragment, lightBuffers[pc.lights_id][lights_data.spot_lights_base + i], world.xyz);
 
     float3 ambient = lerp(frame_data.ambient_indirect, frame_data.ambient, fragment.normal.y * 0.5 + 0.5);
     color += ambient * fragment.color * (1.0 - fragment.metallic) * fragment.ao;

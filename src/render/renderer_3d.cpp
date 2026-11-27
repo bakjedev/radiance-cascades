@@ -24,8 +24,9 @@ namespace {
 
   struct CompositePushConstant {
     uint32_t composite_id;
-    uint32_t frame_id;
+    uint32_t frame_data_id;
     uint32_t cascades_id;
+    uint32_t lights_data_id;
     uint32_t shadow_id;
     uint32_t shadow_sampler_id;
     uint32_t lights_id;
@@ -71,6 +72,7 @@ namespace {
   enum UBODescriptors {
     FrameDataUBO = 0,
     CascadedShadowsUBO,
+    LightsDataUBO,
   };
 } // namespace
 
@@ -104,13 +106,16 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   const auto ubo_alignment = device_.get_physical().getProperties().limits.minUniformBufferOffsetAlignment;
   frame_data_size_ = (sizeof(FrameData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
   cascades_size_ = (sizeof(CascadedShadows) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+  lights_data_size_ = (sizeof(LightsData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
   constexpr auto frame_data_base = static_cast<vk::DeviceSize>(0);
   cascades_base_ = frame_data_size_ * frames_in_flight;
+  lights_data_base_ = cascades_base_ + cascades_size_ * frames_in_flight;
 
   ubo_buffer_.emplace(
       device_.get_allocator(), device_.get(),
       BufferDesc{}
-          .set_size(frame_data_size_ * frames_in_flight + cascades_size_ * frames_in_flight)
+          .set_size(frame_data_size_ * frames_in_flight + cascades_size_ * frames_in_flight +
+                    lights_data_size_ * frames_in_flight)
           .set_usage(vk::BufferUsageFlagBits::eUniformBuffer)
           .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
           .set_debug_name("UBOs"));
@@ -306,6 +311,9 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
     writer.add_buffer(4, frames_in_flight + i, vk::DescriptorType::eUniformBuffer, ubo_buf,
                       cascades_base_ + cascades_size_ * i, cascades_size_);
+
+    writer.add_buffer(4, 2 * frames_in_flight + i, vk::DescriptorType::eUniformBuffer, ubo_buf,
+                      lights_data_base_ + lights_data_size_ * i, lights_data_size_);
   }
 
   writer.update(device_.get(), bindless_descriptor_set_);
@@ -657,8 +665,9 @@ void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
                          &bindless_descriptor_set_, 0, nullptr);
 
   const CompositePushConstant push_constant{.composite_id = CompositeImage,
-                                            .frame_id = FrameDataUBO * frames_in_flight + current_frame_,
+                                            .frame_data_id = FrameDataUBO * frames_in_flight + current_frame_,
                                             .cascades_id = CascadedShadowsUBO * frames_in_flight + current_frame_,
+                                            .lights_data_id = LightsDataUBO * frames_in_flight + current_frame_,
                                             .shadow_id = ShadowTexture,
                                             .shadow_sampler_id = ShadowSampler,
                                             .lights_id = LightsBuffer,
@@ -754,12 +763,16 @@ void Renderer3D::upload_lights()
   std::memcpy(lights_mapping, point_lights_.data(), point_count * sizeof(Light));
   std::memcpy(lights_mapping + max_point_lights, spot_lights_.data(), spot_count * sizeof(Light));
 
-  frame_data_.point_light_count = point_count;
-  frame_data_.spot_light_count = spot_count;
-  frame_data_.point_lights_base = max_lights * current_frame_;
-  frame_data_.spot_lights_base = max_lights * current_frame_ + max_point_lights;
   point_lights_.clear();
   spot_lights_.clear();
+
+  lights_data_.point_light_count = point_count;
+  lights_data_.spot_light_count = spot_count;
+  lights_data_.point_lights_base = max_lights * current_frame_;
+  lights_data_.spot_lights_base = max_lights * current_frame_ + max_point_lights;
+
+  std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + lights_data_base_ + lights_data_size_ * current_frame_,
+              &lights_data_, sizeof(LightsData));
 }
 
 void Renderer3D::upload_materials()
