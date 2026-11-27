@@ -623,7 +623,9 @@ void Renderer3D::shadow_pass(vk::CommandBuffer cmd, const uint32_t cascade) cons
                                vk::Extent2D{CascadedShadows::Resolution, CascadedShadows::Resolution}};
   cmd.setScissor(0, 1, &scissor);
 
-  cmd.setDepthBias(0.0f, 4.0f / static_cast<float>(CascadedShadows::Resolution), CascadedShadows::FilterTexels + 1.0f);
+  const float filter_texels = cascades_.filter_radius_per_texel[static_cast<int>(cascade)];
+  cmd.setDepthBias(0.0f, (filter_texels + 2.0f) / static_cast<float>(CascadedShadows::Resolution),
+                   filter_texels + 1.0f);
 
   const ShadowPushConstant push_constant{
       .cascade = cascade, .cascades_id = CascadesUBO * 2 + current_frame_, .geometries_id = GeometriesBuffer};
@@ -638,7 +640,7 @@ void Renderer3D::shadow_pass(vk::CommandBuffer cmd, const uint32_t cascade) cons
   cmd.bindIndexBuffer(index_buffer, offset, vk::IndexType::eUint32);
 
   constexpr auto stride = sizeof(vk::DrawIndexedIndirectCommand);
-  cmd.drawIndexedIndirect(indirect_buffer_->buffer(), stride * max_geometries * current_frame_, geometry_count_,
+  cmd.drawIndexedIndirect(indirect_buffer_->buffer(), stride * max_geometries * current_frame_, geometry_starts_[1],
                           stride);
 }
 
@@ -703,8 +705,25 @@ void Renderer3D::upload_geometry()
                                                          geometries_region * current_frame_);
 
   geometry_count_ = static_cast<uint32_t>(geometry_submissions_.size());
-  for (uint32_t i = 0; i < geometry_count_; i++) {
-    const auto& [range, material, transform] = geometry_submissions_[i];
+
+  auto get_alpha_mode = [&](const GeometrySubmission& submission) {
+    return materials_[submission.material.id].alpha_mode;
+  };
+
+  std::array<uint32_t, 3> counts{};
+  for (const auto& submission: geometry_submissions_) counts[get_alpha_mode(submission)]++;
+
+  std::array<uint32_t, 3> cursor{};
+  uint32_t start = 0;
+  for (uint32_t i = 0; i < 3; i++) {
+    geometry_starts_[i] = start;
+    cursor[i] = start;
+    start += counts[i];
+  }
+
+  for (const auto& submission: geometry_submissions_) {
+    const auto& [range, material, transform] = submission;
+    const uint32_t i = cursor[get_alpha_mode(submission)]++;
     indirect_mapping[i] = vk::DrawIndexedIndirectCommand{}
                               .setIndexCount(range.index_count)
                               .setInstanceCount(1)
@@ -971,9 +990,14 @@ void Renderer3D::update_cascades()
 
     cascades_.world_to_shadow_clip[i] = light_to_shadow_clip * light_view;
     cascades_.world_units_per_texel[static_cast<int>(i)] = world_units_per_texel;
+    cascades_.filter_radius_per_texel[static_cast<int>(i)] =
+        glm::clamp(CascadedShadows::FilterRadius / world_units_per_texel, 1.0f, 4.0f);
 
     slice_near = slice_far;
   }
+
+  cascades_.inv_res = 1.0 / CascadedShadows::Resolution;
+  cascades_.blend = CascadedShadows::Blend;
 
   std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + cascades_base_ + cascades_size_ * current_frame_, &cascades_,
               sizeof(CascadedShadows));

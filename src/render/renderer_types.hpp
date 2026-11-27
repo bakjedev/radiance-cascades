@@ -58,7 +58,7 @@ struct MaterialInfo {
       uint32_t sampler{UINT32_MAX};
     } albedo, metal_roughness, normal, occlusion, emissive;
   } textures;
-  bool alpha_mode;
+  uint32_t alpha_mode;
   float alpha_cutoff;
 };
 

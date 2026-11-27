@@ -39,6 +39,9 @@ struct Light {
 struct Cascades {
     float4x4 world_to_shadow_clip[4];
     float4 world_units_per_texel;
+    float4 filter_radius_per_texel;
+    float inv_res;
+    float blend;
 }
 
 struct Fragment {
@@ -59,8 +62,6 @@ struct Fragment {
 [[vk::binding(3, 0)]] SamplerComparisonState shadowSamplers[];
 
 static const uint SHADOW_CASCADE_COUNT = 4;
-static const float SHADOW_RES = 2048.0;
-static const float FILTER_TEXELS = 2.0;
 static const float NORMAL_OFFSET_TEXELS = 1.0;
 
 static const float2 POISSON_DISK[16] = {
@@ -164,22 +165,41 @@ float pcf_poisson(Texture2DArray shadow_map, SamplerComparisonState shadow_sampl
     return sum * (1.0 / 16.0);
 }
 
+bool project_cascade(Cascades cascades, uint idx, float3 world, float3 normal, float n_dot_l, out float3 shadow_coord, out float edge) {
+    float normal_offset_distance = cascades.world_units_per_texel[idx] * NORMAL_OFFSET_TEXELS * (1.0 - n_dot_l);
+    float3 shadow_ndc = mul(cascades.world_to_shadow_clip[idx], float4(world + normal * normal_offset_distance, 1.0)).xyz;
+    float2 shadow_uv = shadow_ndc.xy * 0.5 + 0.5;
+
+    float margin_uv = (cascades.filter_radius_per_texel[idx] + 1.0) * cascades.inv_res;
+    float2 to_border = min(shadow_uv - margin_uv, (1.0 - margin_uv) - shadow_uv);
+    edge = min(to_border.x, to_border.y) / (0.5 - margin_uv);
+    shadow_coord = float3(shadow_uv, shadow_ndc.z);
+    return edge >= 0.0 && shadow_ndc.z >= 0.0 && shadow_ndc.z <= 1.0;
+}
+
+float sample_cascade(Cascades cascades, Texture2DArray shadow_map, SamplerComparisonState shadow_sampler, uint idx, float3 coord, float2 pixel) {
+    float radius_uv = cascades.filter_radius_per_texel[idx] * cascades.inv_res;
+    return pcf_poisson(shadow_map, shadow_sampler, coord.xy, idx, coord.z, radius_uv, pixel);
+}
+
 float visibility(Cascades cascades, Texture2DArray shadow_map, SamplerComparisonState shadow_sampler, float3 world, float3 normal, float n_dot_l, float2 pixel) {
-    const float radius_uv = FILTER_TEXELS / SHADOW_RES;
-    const float margin_uv = (FILTER_TEXELS + 1.0) / SHADOW_RES;
+    for (uint i = 0; i < SHADOW_CASCADE_COUNT; i++) {
+        float3 coord;
+        float edge;
+        if (!project_cascade(cascades, i, world, normal, n_dot_l, coord, edge)) continue;
 
-    for (uint i = 0; i < 4; i++) {
-        float world_units_per_texel = cascades.world_units_per_texel[i];
-        float normal_offset_distance = world_units_per_texel * NORMAL_OFFSET_TEXELS * (1.0 - n_dot_l);
-        float3 lookup_position = world + normal * normal_offset_distance;
+        float shadow = sample_cascade(cascades, shadow_map, shadow_sampler, i, coord, pixel);
+        if (edge >= cascades.blend) return shadow;
 
-        float3 shadow_ndc = mul(cascades.world_to_shadow_clip[i], float4(lookup_position, 1.0)).xyz;
-        float2 shadow_uv = shadow_ndc.xy * 0.5 + 0.5;
-
-        bool inside_this_cascade = all(shadow_uv >= margin_uv) && all(shadow_uv <= 1.0 - margin_uv) && shadow_ndc.z >= 0.0 && shadow_ndc.z <= 1.0;
-        if (!inside_this_cascade) continue;
-
-        return pcf_poisson(shadow_map, shadow_sampler, shadow_uv, i, shadow_ndc.z, radius_uv, pixel);
+        float next_shadow = 1.0;
+        if (i + 1 < SHADOW_CASCADE_COUNT) {
+            float3 next_coord;
+            float next_edge;
+            if (!project_cascade(cascades, i + 1, world, normal, n_dot_l, next_coord, next_edge))
+                return shadow;
+            next_shadow = sample_cascade(cascades, shadow_map, shadow_sampler, i + 1, next_coord, pixel);
+        }
+        return lerp(next_shadow, shadow, smoothstep(0.0, 1.0, edge / cascades.blend));
     }
     return 1.0;
 }

@@ -51,7 +51,7 @@ private:
     uint32_t normal_tex;
     uint32_t occlusion_tex;
     uint32_t emissive_tex;
-    bool alpha_mode;
+    uint32_t alpha_mode;
     float alpha_cutoff;
     uint32_t pad_0;
     uint32_t pad_1;
@@ -89,9 +89,14 @@ private:
     static constexpr auto Count = 4;
     static constexpr auto Distance = 150.0f;
     static constexpr auto Lambda = 0.75f;
-    static constexpr float FilterTexels = 2.0f;
+    static constexpr float FilterRadius = 0.015f;
+    static constexpr float Blend = 0.1f;
     glm::mat4 world_to_shadow_clip[Count];
     glm::vec4 world_units_per_texel;
+    glm::vec4 filter_radius_per_texel;
+    float inv_res;
+    float blend;
+    glm::vec2 pad;
   };
 
   RenderInfo info_{};
@@ -101,6 +106,8 @@ private:
   bool upload_materials_ = false;
 
   std::vector<GeometrySubmission> geometry_submissions_;
+  std::array<uint32_t, 3> geometry_starts_{};
+  uint32_t geometry_count_ = 0;
 
   std::optional<Buffer> vertex_buffer_;
   std::optional<Buffer> index_buffer_;
@@ -164,8 +171,6 @@ private:
   std::optional<Image> composite_image_;
   vk::UniqueImageView composite_view_;
   fwrk::ResourceID composite_id_;
-
-  uint32_t geometry_count_ = 0;
 
   void compile();
 

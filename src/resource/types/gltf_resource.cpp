@@ -143,8 +143,8 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
     mat_info.emissive_color = glm::make_vec3(material.emissiveFactor.data());
     mat_info.metallic = material.pbrData.metallicFactor;
     mat_info.roughness = material.pbrData.roughnessFactor;
+    mat_info.alpha_mode = static_cast<uint32_t>(material.alphaMode);
     mat_info.alpha_cutoff = material.alphaCutoff;
-    mat_info.alpha_mode = material.alphaMode != fastgltf::AlphaMode::Opaque;
 
     const auto fill_texture = [&](auto& texture, const auto& info) {
       const auto& [image, sampler] = result.textures[info.textureIndex];
