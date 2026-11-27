@@ -12,6 +12,8 @@ struct ImageDesc {
   vk::ImageUsageFlags usage{};
   vk::ImageTiling tiling = vk::ImageTiling::eOptimal;
 
+  vk::ImageCreateFlagBits flags{};
+
   VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO;
   VmaAllocationCreateFlags alloc_flags{};
 
@@ -58,6 +60,12 @@ struct ImageDesc {
   ImageDesc& set_usage(const vk::ImageUsageFlags usage_flags)
   {
     usage = usage_flags;
+    return *this;
+  }
+
+  ImageDesc& set_flags(const vk::ImageCreateFlagBits create_flags)
+  {
+    flags = create_flags;
     return *this;
   }
 
@@ -155,6 +163,7 @@ private:
         .setSamples(desc.samples)
         .setTiling(desc.tiling)
         .setUsage(desc.usage)
+        .setFlags(desc.flags)
         .setSharingMode(vk::SharingMode::eExclusive)
         .setInitialLayout(vk::ImageLayout::eUndefined);
 

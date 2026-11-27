@@ -1,4 +1,4 @@
-#include "common.slang"
+#include "../common.slang"
 
 struct BlurPushConstant {
     uint light_id;

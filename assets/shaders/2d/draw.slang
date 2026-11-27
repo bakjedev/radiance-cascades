@@ -1,4 +1,4 @@
-#include "common.slang"
+#include "../common.slang"
 
 struct PushConstant {
     uint draw_id;

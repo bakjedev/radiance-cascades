@@ -70,7 +70,7 @@ namespace {
 
   enum UBODescriptors {
     FrameDataUBO = 0,
-    CascadesUBO,
+    CascadedShadowsUBO,
   };
 } // namespace
 
@@ -154,7 +154,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
     vk::PushConstantRange raster_push{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
                                       sizeof(RasterPushConstant)};
 
-    const auto raster_shader = create_info.load_shader("assets:/shaders/raster.spv");
+    const auto raster_shader = create_info.load_shader("assets:/shaders/3d/raster.spv");
     raster_shader_module_ = create_shader_module(device_.get(), raster_shader);
 
     raster_pipeline_layout_ =
@@ -201,7 +201,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange shadow_push{vk::ShaderStageFlagBits::eVertex, 0, sizeof(ShadowPushConstant)};
 
-    const auto shadow_shader = create_info.load_shader("assets:/shaders/shadow.spv");
+    const auto shadow_shader = create_info.load_shader("assets:/shaders/3d/shadow.spv");
     shadow_shader_module_ = create_shader_module(device_.get(), shadow_shader);
 
     shadow_pipeline_layout_ =
@@ -241,7 +241,7 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   {
     vk::PushConstantRange composite_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CompositePushConstant)};
 
-    const auto composite_shader = create_info.load_shader("assets:/shaders/composite3d.spv");
+    const auto composite_shader = create_info.load_shader("assets:/shaders/3d/composite.spv");
     composite_shader_module_ = create_shader_module(device_.get(), composite_shader);
 
     composite_pipeline_layout_ =
@@ -292,18 +292,23 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
   const auto ubo_buf = ubo_buffer_->buffer();
 
-  DescriptorWriter{}
-      .add_buffer(1, GeometriesBuffer, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer())
+  DescriptorWriter writer{};
+
+  writer.add_buffer(1, GeometriesBuffer, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer())
       .add_buffer(1, LightsBuffer, vk::DescriptorType::eStorageBuffer, lights_buffer_->buffer())
       .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .add_image(3, ShadowSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
-                 shadow_sampler_.get())
-      .add_buffer(4, 0, vk::DescriptorType::eUniformBuffer, ubo_buf, frame_data_base, frame_data_size_)
-      .add_buffer(4, 1, vk::DescriptorType::eUniformBuffer, ubo_buf, frame_data_base + frame_data_size_,
-                  frame_data_size_)
-      .add_buffer(4, 2, vk::DescriptorType::eUniformBuffer, ubo_buf, cascades_base_, cascades_size_)
-      .add_buffer(4, 3, vk::DescriptorType::eUniformBuffer, ubo_buf, cascades_base_ + cascades_size_, cascades_size_)
-      .update(device_.get(), bindless_descriptor_set_);
+                 shadow_sampler_.get());
+
+  for (uint32_t i = 0; i < frames_in_flight; i++) {
+    writer.add_buffer(4, i, vk::DescriptorType::eUniformBuffer, ubo_buf, frame_data_base + frame_data_size_ * i,
+                      frame_data_size_);
+
+    writer.add_buffer(4, frames_in_flight + i, vk::DescriptorType::eUniformBuffer, ubo_buf,
+                      cascades_base_ + cascades_size_ * i, cascades_size_);
+  }
+
+  writer.update(device_.get(), bindless_descriptor_set_);
 
   frame_data_.sun_dir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.2f));
   frame_data_.sun_color = glm::vec3(1.0f, 0.95f, 0.9f) * 3.0f;
@@ -627,8 +632,9 @@ void Renderer3D::shadow_pass(vk::CommandBuffer cmd, const uint32_t cascade) cons
   cmd.setDepthBias(0.0f, (filter_texels + 2.0f) / static_cast<float>(CascadedShadows::Resolution),
                    filter_texels + 1.0f);
 
-  const ShadowPushConstant push_constant{
-      .cascade = cascade, .cascades_id = CascadesUBO * 2 + current_frame_, .geometries_id = GeometriesBuffer};
+  const ShadowPushConstant push_constant{.cascade = cascade,
+                                         .cascades_id = CascadedShadowsUBO * frames_in_flight + current_frame_,
+                                         .geometries_id = GeometriesBuffer};
 
   cmd.pushConstants(shadow_pipeline_layout_.get(), vk::ShaderStageFlagBits::eVertex, 0, sizeof(ShadowPushConstant),
                     &push_constant);
@@ -651,8 +657,8 @@ void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
                          &bindless_descriptor_set_, 0, nullptr);
 
   const CompositePushConstant push_constant{.composite_id = CompositeImage,
-                                            .frame_id = FrameDataUBO * 2 + current_frame_,
-                                            .cascades_id = CascadesUBO * 2 + current_frame_,
+                                            .frame_id = FrameDataUBO * frames_in_flight + current_frame_,
+                                            .cascades_id = CascadedShadowsUBO * frames_in_flight + current_frame_,
                                             .shadow_id = ShadowTexture,
                                             .shadow_sampler_id = ShadowSampler,
                                             .lights_id = LightsBuffer,

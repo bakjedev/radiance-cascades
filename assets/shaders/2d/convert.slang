@@ -1,4 +1,4 @@
-#include "common.slang"
+#include "../common.slang"
 
 struct VSOutput {
     float4 pos : SV_Position;
