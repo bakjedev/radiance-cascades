@@ -26,7 +26,7 @@ struct LightsData {
 
 struct Light {
     float3 position;
-    float range;
+    float inv_range;
     float3 direction;
     float angle_size;
     float3 radiance;
@@ -124,7 +124,7 @@ float3 evaluate_point_light(Fragment fragment, Light light, float3 world) {
     float3 distance = light.position - world;
     float  distance_sq = dot(distance, distance);
     float3 dir = distance * rsqrt(distance_sq);
-    return evaluate_brdf(fragment, dir) * light.radiance * distance_falloff(distance_sq, 1.0 / light.range);
+    return evaluate_brdf(fragment, dir) * light.radiance * distance_falloff(distance_sq, light.inv_range);
 }
 
 float3 evaluate_spot_light(Fragment fragment, Light light, float3 world) {
@@ -135,7 +135,7 @@ float3 evaluate_spot_light(Fragment fragment, Light light, float3 world) {
     float angle = saturate(dot(light.direction, -dir) * light.angle_size + light.angle_offset);
     angle *= angle;
 
-    return evaluate_brdf(fragment, dir) * light.radiance * distance_falloff(distance_sq, 1.0 / light.range) * angle;
+    return evaluate_brdf(fragment, dir) * light.radiance * distance_falloff(distance_sq, light.inv_range) * angle;
 }
 
 float interleaved_gradient_noise(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }
@@ -240,7 +240,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
                                                  shadowSamplers[pc.shadow_sampler_id],
                                                  world.xyz, fragment.normal, n_dot_l, float2(local)) : 0.0;
 
-    color += evaluate_brdf(fragment, frame_data.sun_dir) * frame_data.sun_color * visibility;
+    color += evaluate_brdf(fragment, frame_data.sun_dir) * frame_data.sun_color * frame_data.sun_intensity * visibility;
 
     LightsData lights_data = lightsUBOs[pc.lights_data_id];
     for (uint i = 0; i < lights_data.point_light_count; ++i)
@@ -248,8 +248,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uniform PushConstant pc)
     for (uint i = 0; i < lights_data.spot_light_count; ++i)
         color += evaluate_spot_light(fragment, lightBuffers[pc.lights_id][lights_data.spot_lights_base + i], world.xyz);
 
-    float3 ambient = lerp(frame_data.ambient_indirect, frame_data.ambient, fragment.normal.y * 0.5 + 0.5);
-    color += ambient * fragment.color * (1.0 - fragment.metallic) * fragment.ao;
+    float ambient = lerp(frame_data.ambient_indirect, frame_data.ambient, fragment.normal.y * 0.5 + 0.5);
+    color += ambient * frame_data.sun_color * frame_data.sun_intensity * fragment.color * (1.0 - fragment.metallic) * fragment.ao;
 
     color += emissive;
 

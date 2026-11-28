@@ -25,6 +25,7 @@ VSOutput vs_main(uint vertexID : SV_VulkanVertexID) {
 struct PushConstant {
     uint composite_id;
     bool aces;
+    float exposure;
 }
 
 [[vk::binding(2, 0)]] Texture2D textures[];
@@ -34,6 +35,7 @@ struct PushConstant {
 float4 fs_main(VSOutput input, uniform PushConstant pc) : SV_Target {
     float3 col = textures[pc.composite_id].Sample(samplers[0], input.uv).xyz;
     //col = col / (1.0 + col); // reinhard
+    col *= pc.exposure;
     if (pc.aces) col = aces(col);
     return float4(col, 1.0);
 }

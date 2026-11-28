@@ -18,6 +18,15 @@ public:
   void submit_light(const PointLightSubmission& submission);
   void submit_light(const SpotLightSubmission& submission);
 
+  struct Renderer3DConfig {
+    struct BlitConfig {
+      bool aces = true;
+      float exposure = 1.0f;
+    } blit;
+  };
+
+  Renderer3DConfig& config() { return config_; }
+
 private:
   static constexpr uint32_t max_geometries = 1 << 16;
   static constexpr uint32_t filter_count = 5;
@@ -86,7 +95,7 @@ private:
 
   struct Light {
     glm::vec3 position;
-    float range;
+    float inv_range;
     glm::vec3 direction;
     float angle_size;
     glm::vec3 radiance;
@@ -95,11 +104,12 @@ private:
 
   struct FrameData {
     glm::mat4 inv_view_proj;
-    alignas(16) glm::vec3 camera_pos;
-    alignas(16) glm::vec3 sun_dir;
-    alignas(16) glm::vec3 sun_color;
-    alignas(16) glm::vec3 ambient;
-    alignas(16) glm::vec3 ambient_indirect;
+    glm::vec3 camera_pos;
+    float sun_intensity;
+    glm::vec3 sun_dir;
+    float ambient;
+    glm::vec3 sun_color;
+    float ambient_indirect;
   };
 
   struct CascadedShadows {
@@ -127,6 +137,7 @@ private:
   };
 
   RenderInfo info_{};
+  Renderer3DConfig config_{};
 
   std::vector<vk::UniqueSampler> samplers_;
   std::vector<Material> materials_;
@@ -247,6 +258,8 @@ private:
   static uint32_t pack_texture_index(const MaterialInfo::Textures::Texture& texture);
 
   static std::array<glm::vec4, 6> extract_frustum_planes(const glm::mat4& matrix);
+
+  static float derive_light_range(float intensity, float exposure, float epsilon);
 };
 
 static_assert(RendererInterface<Renderer3D>);

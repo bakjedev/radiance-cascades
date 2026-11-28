@@ -3,10 +3,11 @@ static const float PI = 3.14159265359;
 struct FrameData {
     float4x4 inv_view_proj;
     float3 camera_pos;
+    float sun_intensity;
     float3 sun_dir;
+    float ambient;
     float3 sun_color;
-    float3 ambient;
-    float3 ambient_indirect;
+    float ambient_indirect;
 }
 
 struct Geometry {

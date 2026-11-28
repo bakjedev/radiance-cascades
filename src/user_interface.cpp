@@ -2,6 +2,7 @@
 #include "imgui_impl_sdl3.h"
 #include "implot.h"
 #include "render/renderer_2d.hpp"
+#include "render/renderer_3d.hpp"
 
 UserInterface::UserInterface(SDL_Window* window)
 {
@@ -102,7 +103,16 @@ void UserInterface::renderer_2d_panel(Renderer2D& renderer)
   ImGui::End();
 }
 
-void UserInterface::renderer_3d_panel([[maybe_unused]] Renderer3D& renderer) {}
+void UserInterface::renderer_3d_panel([[maybe_unused]] Renderer3D& renderer)
+{
+  auto& cfg = renderer.config();
+  ImGui::Begin("Config");
+
+  ImGui::Checkbox("ACES", &cfg.blit.aces);
+  ImGui::SliderFloat("Exposure", &cfg.blit.exposure, 0.0f, 10.0f);
+
+  ImGui::End();
+}
 
 void UserInterface::performance_panel(const fwrk::Graph::FrameTimings& timings)
 {

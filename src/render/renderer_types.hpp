@@ -74,13 +74,14 @@ struct GeometrySubmission {
 
 struct LightSubmission {
   glm::vec3 position;
-  glm::vec3 radiance;
-  float range;
+  glm::vec3 color;
+  float intensity;
+  std::optional<float> range;
 };
 struct PointLightSubmission : LightSubmission {};
 struct SpotLightSubmission : LightSubmission {
   glm::vec3 direction;
-  float cos_inner, cos_outer;
+  std::optional<float> inner_cone, outer_cone;
 };
 
 namespace GeometryFlags {

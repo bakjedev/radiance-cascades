@@ -64,12 +64,12 @@ void Application::run()
             [&]<typename T>(const T& light) {
               const auto position = glm::vec3(transform[3]);
               if constexpr (std::is_same_v<T, Scene::PointLight>) {
-                renderer_.submit_light(PointLightSubmission{position, light.color * light.intensity, light.range});
+                renderer_.submit_light(PointLightSubmission{position, light.color, light.intensity, light.range});
               } else if constexpr (std::is_same_v<T, Scene::SpotLight>) {
-                renderer_.submit_light(SpotLightSubmission{{position, light.color * light.intensity, light.range},
+                renderer_.submit_light(SpotLightSubmission{{position, light.color, light.intensity, light.range},
                                                            -glm::vec3(transform[2]),
-                                                           std::cos(light.inner_cone),
-                                                           std::cos(light.outer_cone)});
+                                                           light.inner_cone,
+                                                           light.outer_cone});
               }
             },
             scene_.lights().at(light_id));

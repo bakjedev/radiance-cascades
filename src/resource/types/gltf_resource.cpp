@@ -278,8 +278,7 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
 
   for (const auto& light: asset->lights) {
     result.lights.emplace_back(static_cast<GLTFResource::Light::Type>(light.type), glm::make_vec3(light.color.data()),
-                               light.intensity, light.range.value_or(0.0f), light.innerConeAngle.value_or(0.0f),
-                               light.outerConeAngle.value_or(0.0f));
+                               light.intensity, light.range, light.innerConeAngle, light.outerConeAngle);
   }
 
   for (const auto& camera: asset->cameras) {

@@ -30,12 +30,12 @@ public:
   struct LightBase {
     glm::vec3 color;
     float intensity;
-    float range;
+    std::optional<float> range;
   };
   struct PointLight : LightBase {};
   struct SpotLight : LightBase {
-    float inner_cone;
-    float outer_cone;
+    std::optional<float> inner_cone;
+    std::optional<float> outer_cone;
   };
   using Light = std::variant<PointLight, SpotLight>;
 

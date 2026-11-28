@@ -38,9 +38,9 @@ struct GLTFResource {
     glm::vec3 color;
     float intensity;
 
-    float range;
-    float inner_cone_angle;
-    float outer_cone_angle;
+    std::optional<float> range;
+    std::optional<float> inner_cone_angle;
+    std::optional<float> outer_cone_angle;
   };
 
   struct Camera {

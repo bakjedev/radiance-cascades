@@ -94,6 +94,7 @@ namespace {
   struct BlitPushConstant {
     uint32_t composite_id;
     bool aces;
+    float exposure;
   };
 
   enum ImageDescriptors {
@@ -941,6 +942,7 @@ void Renderer2D::blit_pass(vk::CommandBuffer cmd)
   const BlitPushConstant push_constant{
       .composite_id = CompositeTexture,
       .aces = config_.composite.aces,
+      .exposure = 1.0f,
   };
 
   cmd.pushConstants(blit_pipeline_layout_.get(), vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant),

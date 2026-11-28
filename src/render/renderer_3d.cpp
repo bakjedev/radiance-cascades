@@ -49,6 +49,7 @@ namespace {
   struct BlitPushConstant {
     uint32_t composite_id;
     bool aces;
+    float exposure;
   };
 
   enum TextureDescriptors {
@@ -389,9 +390,10 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   writer.update(device_.get(), bindless_descriptor_set_);
 
   frame_data_.sun_dir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.2f));
-  frame_data_.sun_color = glm::vec3(1.0f, 0.95f, 0.9f) * 3.0f;
-  frame_data_.ambient = glm::vec3(0.15f, 0.18f, 0.25f);
-  frame_data_.ambient_indirect = glm::vec3(0.05f, 0.04f, 0.03f);
+  frame_data_.sun_color = glm::vec3(1.0f, 0.95f, 0.9f);
+  frame_data_.sun_intensity = 1.0f;
+  frame_data_.ambient = 0.15f;
+  frame_data_.ambient_indirect = 0.03f;
 
   for (uint32_t i = 0; i < filter_count; i++) {
     auto* filter_mapping =
@@ -578,15 +580,35 @@ void Renderer3D::submit_geometry(const GeometrySubmission& submission) { geometr
 
 void Renderer3D::submit_light(const PointLightSubmission& submission)
 {
-  point_lights_.emplace_back(submission.position, submission.range, glm::vec3(0.0f), 0.0f, submission.radiance, 1.0f);
+  const float max_channel =
+      submission.intensity * std::max({submission.color.r, submission.color.g, submission.color.b});
+  const float range =
+      submission.range ? *submission.range : derive_light_range(max_channel, config_.blit.exposure, 1.0f / 256.0f);
+  if (range <= 0.0f) return;
+
+  point_lights_.emplace_back(submission.position, 1.0f / range, glm::vec3(0.0f), 0.0f,
+                             submission.color * submission.intensity, 1.0f);
 }
 
 void Renderer3D::submit_light(const SpotLightSubmission& submission)
 {
-  assert(submission.cos_inner >= submission.cos_outer);
-  const auto angle_size = 1.0f / std::max(0.001f, submission.cos_inner - submission.cos_outer);
-  spot_lights_.emplace_back(submission.position, submission.range, glm::normalize(submission.direction), angle_size,
-                            submission.radiance, -submission.cos_outer * angle_size);
+  const float max_channel =
+      submission.intensity * std::max({submission.color.r, submission.color.g, submission.color.b});
+  const float range =
+      submission.range ? *submission.range : derive_light_range(max_channel, config_.blit.exposure, 1.0f / 256.0f);
+  if (range <= 0.0f) return;
+
+  const float outer =
+      std::clamp(submission.outer_cone.value_or(glm::quarter_pi<float>()), 0.0001f, glm::half_pi<float>());
+  const float inner = std::clamp(submission.inner_cone.value_or(0.0f), 0.0f, outer);
+  const float cos_outer = std::cos(outer);
+  const float cos_inner = std::cos(inner);
+
+  const auto angle_size = 1.0f / std::max(0.001f, cos_inner - cos_outer);
+  const float angle_offset = -cos_outer * angle_size;
+
+  spot_lights_.emplace_back(submission.position, 1.0f / range, glm::normalize(submission.direction), angle_size,
+                            submission.color * submission.intensity, angle_offset);
 }
 
 void Renderer3D::compile()
@@ -804,9 +826,10 @@ void Renderer3D::blit_pass(vk::CommandBuffer cmd) const
   const vk::Rect2D scissor{vk::Offset2D{0, 0}, vk::Extent2D{info_.window_size.first, info_.window_size.second}};
   cmd.setScissor(0, 1, &scissor);
 
-  constexpr BlitPushConstant push_constant{
+  const BlitPushConstant push_constant{
       .composite_id = CompositeTexture,
-      .aces = true,
+      .aces = config_.blit.aces,
+      .exposure = glm::pi<float>() * config_.blit.exposure,
   };
 
   cmd.pushConstants(blit_pipeline_layout_.get(), vk::ShaderStageFlagBits::eFragment, 0, sizeof(BlitPushConstant),
@@ -887,31 +910,6 @@ void Renderer3D::upload_primitives()
   DescriptorWriter{}
       .add_buffer(1, PrimitiveBuffer, vk::DescriptorType::eStorageBuffer, primitive_buffer_->buffer())
       .update(device_.get(), bindless_descriptor_set_);
-}
-
-void Renderer3D::update_filters() const
-{
-  for (uint32_t i = 0; i < filter_count; i++) {
-    auto* filter_mapping =
-        reinterpret_cast<CullFilter*>(filter_buffer_->get_mapped_data<std::byte>() + sizeof(CullFilter) * i);
-
-    switch (i) {
-      case RasterFilter: {
-        filter_mapping->planes = extract_frustum_planes(info_.projection * info_.view);
-        break;
-      }
-      case ShadowCascadeFilter:
-      case ShadowCascadeFilter + 1:
-      case ShadowCascadeFilter + 2:
-      case ShadowCascadeFilter + 3: {
-        const uint32_t cascade = i - ShadowCascadeFilter;
-        filter_mapping->planes = extract_frustum_planes(cascades_.world_to_shadow_clip[cascade]);
-        break;
-      }
-      default:
-        break;
-    }
-  }
 }
 
 void Renderer3D::upload_geometry()
@@ -1013,6 +1011,31 @@ void Renderer3D::upload_materials()
   DescriptorWriter{}
       .add_buffer(1, MaterialBuffer, vk::DescriptorType::eStorageBuffer, material_buffer_->buffer())
       .update(device_.get(), bindless_descriptor_set_);
+}
+
+void Renderer3D::update_filters() const
+{
+  for (uint32_t i = 0; i < filter_count; i++) {
+    auto* filter_mapping =
+        reinterpret_cast<CullFilter*>(filter_buffer_->get_mapped_data<std::byte>() + sizeof(CullFilter) * i);
+
+    switch (i) {
+      case RasterFilter: {
+        filter_mapping->planes = extract_frustum_planes(info_.projection * info_.view);
+        break;
+      }
+      case ShadowCascadeFilter:
+      case ShadowCascadeFilter + 1:
+      case ShadowCascadeFilter + 2:
+      case ShadowCascadeFilter + 3: {
+        const uint32_t cascade = i - ShadowCascadeFilter;
+        filter_mapping->planes = extract_frustum_planes(cascades_.world_to_shadow_clip[cascade]);
+        break;
+      }
+      default:
+        break;
+    }
+  }
 }
 
 void Renderer3D::update_frame_data()
@@ -1253,4 +1276,11 @@ std::array<glm::vec4, 6> Renderer3D::extract_frustum_planes(const glm::mat4& mat
       normalize_plane(transpose[3] - transpose[2]), // far
       normalize_plane(transpose[2]), // near
   };
+}
+
+float Renderer3D::derive_light_range(const float intensity, const float exposure, const float epsilon)
+{
+  if (intensity <= 0.0f) return 0.0f;
+  const float eps = epsilon / exposure;
+  return std::sqrt(intensity / eps) * 1.5f;
 }
