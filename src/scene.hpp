@@ -12,6 +12,7 @@ public:
     uint32_t mesh_id;
     uint32_t camera_id;
     uint32_t light_id;
+    bool cast_shadow;
   };
 
   struct CameraBase {

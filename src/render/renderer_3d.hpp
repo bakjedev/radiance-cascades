@@ -11,7 +11,8 @@ public:
 
   GPUSampler create_sampler(Filter min_filter, Filter mag_filter, Wrap wrap_s, Wrap wrap_t);
   GPUMaterial create_material(const MaterialInfo& material);
-  void upload_vertices(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
+  GPUPrimitive create_primitive(std::span<const Vertex> vertices, std::span<const uint32_t> indices,
+                                const glm::vec4& bounds);
 
   void submit_geometry(const GeometrySubmission& submission);
   void submit_light(const PointLightSubmission& submission);
@@ -19,6 +20,7 @@ public:
 
 private:
   static constexpr uint32_t max_geometries = 1 << 16;
+  static constexpr uint32_t filter_count = 5;
 
   static constexpr uint32_t max_point_lights = 512;
   static constexpr uint32_t max_spot_lights = 512;
@@ -57,9 +59,29 @@ private:
     uint32_t pad_1;
   };
 
+  struct Primitive {
+    uint32_t first_index;
+    uint32_t index_count;
+    uint32_t vertex_offset;
+    uint32_t pad{};
+    glm::vec4 local_bounds;
+  };
+
   struct Geometry {
     glm::mat4 transform;
-    alignas(16) GPUMaterial material;
+    glm::vec4 bounds;
+    GPUPrimitive primitive;
+    GPUMaterial material;
+    uint32_t flags;
+    uint32_t pad{};
+  };
+
+  struct CullFilter {
+    std::array<glm::vec4, 6> planes;
+    uint32_t include_mask;
+    uint32_t exclude_mask;
+    uint32_t cull_flags;
+    uint32_t base;
   };
 
   struct Light {
@@ -83,7 +105,7 @@ private:
   struct CascadedShadows {
     static constexpr auto Resolution = 2048;
     static constexpr auto Count = 4;
-    static constexpr auto Distance = 150.0f;
+    static constexpr auto Distance = 50.0f;
     static constexpr auto Lambda = 0.75f;
     static constexpr float FilterRadius = 0.015f;
     static constexpr float Blend = 0.1f;
@@ -111,16 +133,26 @@ private:
   bool upload_materials_ = false;
 
   std::vector<GeometrySubmission> geometry_submissions_;
-  std::array<uint32_t, 3> geometry_starts_{};
-  uint32_t geometry_count_ = 0;
+  uint32_t geometries_count_{};
 
+  std::vector<Vertex> vertices_;
+  std::vector<uint32_t> indices_;
+  std::vector<Primitive> primitives_;
   std::optional<Buffer> vertex_buffer_;
   std::optional<Buffer> index_buffer_;
+  std::optional<Buffer> primitive_buffer_;
+  bool upload_primitives_ = false;
 
   std::optional<Buffer> material_buffer_;
 
   std::optional<Buffer> indirect_buffer_;
+  fwrk::ResourceID indirect_id;
   std::optional<Buffer> geometries_buffer_;
+
+  std::optional<Buffer> filter_buffer_;
+
+  std::optional<Buffer> count_buffer;
+  fwrk::ResourceID count_id;
 
   std::vector<Light> point_lights_;
   std::vector<Light> spot_lights_;
@@ -130,13 +162,17 @@ private:
   FrameData frame_data_{};
   CascadedShadows cascades_{};
   LightsData lights_data_{};
-  vk::DeviceSize frame_data_size_{};
-  vk::DeviceSize cascades_size_{};
-  vk::DeviceSize lights_data_size_;
-  vk::DeviceSize cascades_base_{};
-  vk::DeviceSize lights_data_base_;
+  vk::DeviceSize frame_data_ubo_size_{};
+  vk::DeviceSize cascaded_shadows_ubo_size_{};
+  vk::DeviceSize lights_data_ubo_size_;
+  vk::DeviceSize cascades_ubo_base_{};
+  vk::DeviceSize lights_data_ubo_base_;
 
-  vk::UniqueSampler shadow_sampler_;
+  vk::UniqueSampler cascaded_shadow_sampler_;
+
+  vk::UniquePipelineLayout cull_pipeline_layout_;
+  vk::UniqueShaderModule cull_shader_module_;
+  vk::UniquePipeline cull_pipeline_;
 
   vk::UniquePipelineLayout raster_pipeline_layout_;
   vk::UniqueShaderModule raster_shader_module_;
@@ -172,9 +208,9 @@ private:
   fwrk::ResourceID emissive_id_;
   fwrk::ResourceID depth_id_;
 
-  std::optional<Image> shadow_image_;
-  vk::UniqueImageView shadow_view_;
-  fwrk::ResourceID shadow_id_;
+  std::optional<Image> cascaded_shadow_image_;
+  vk::UniqueImageView cascaded_shadow_view_;
+  fwrk::ResourceID cascaded_shadow_id_;
 
   std::optional<Image> composite_image_;
   vk::UniqueImageView composite_view_;
@@ -183,16 +219,22 @@ private:
   void compile();
 
   void imgui_pass(vk::CommandBuffer cmd) const;
+  void clear_count_pass(vk::CommandBuffer cmd) const;
+  void cull_pass(vk::CommandBuffer cmd) const;
   void raster_pass(vk::CommandBuffer cmd) const;
   void shadow_pass(vk::CommandBuffer cmd, uint32_t cascade) const;
   void composite_pass(vk::CommandBuffer cmd) const;
   void blit_pass(vk::CommandBuffer cmd) const;
+
+  void upload_primitives();
 
   void upload_geometry();
 
   void upload_lights();
 
   void upload_materials();
+
+  void update_filters() const;
 
   void update_frame_data();
 
@@ -203,6 +245,8 @@ private:
   void update_cascades();
 
   static uint32_t pack_texture_index(const MaterialInfo::Textures::Texture& texture);
+
+  static std::array<glm::vec4, 6> extract_frustum_planes(const glm::mat4& matrix);
 };
 
 static_assert(RendererInterface<Renderer3D>);

@@ -60,7 +60,8 @@ bool Device::is_device_suitable(const vk::PhysicalDevice& device)
       !features.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingPartiallyBound ||
       !features.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingStorageBufferUpdateAfterBind ||
       !features.get<vk::PhysicalDeviceVulkan12Features>().shaderStorageImageArrayNonUniformIndexing ||
-      !features.get<vk::PhysicalDeviceVulkan12Features>().runtimeDescriptorArray) {
+      !features.get<vk::PhysicalDeviceVulkan12Features>().runtimeDescriptorArray ||
+      !features.get<vk::PhysicalDeviceVulkan12Features>().drawIndirectCount) {
     return false;
   }
 
@@ -139,6 +140,7 @@ void Device::create_device()
   feature_chain.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingStorageBufferUpdateAfterBind = vk::True;
   feature_chain.get<vk::PhysicalDeviceVulkan12Features>().runtimeDescriptorArray = vk::True;
   feature_chain.get<vk::PhysicalDeviceVulkan12Features>().shaderStorageImageArrayNonUniformIndexing = vk::True;
+  feature_chain.get<vk::PhysicalDeviceVulkan12Features>().drawIndirectCount = vk::True;
 
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageReadWithoutFormat = vk::True;
   feature_chain.get<vk::PhysicalDeviceFeatures2>().features.shaderStorageImageWriteWithoutFormat = vk::True;

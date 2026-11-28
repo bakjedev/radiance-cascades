@@ -1,3 +1,5 @@
+#include "common.slang"
+
 struct VSInput {
     float3 pos : POSITION;
     float3 normal : NORMAL;
@@ -28,11 +30,6 @@ struct PushConstant {
     uint materials_id;
     uint textures_id;
     uint samplers_id;
-}
-
-struct Geometry {
-    float4x4 transform;
-    uint material;
 }
 
 [[vk::binding(1, 0)]] StructuredBuffer<Geometry> storageBuffersGeometry[];

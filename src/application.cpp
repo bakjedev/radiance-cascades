@@ -50,10 +50,12 @@ void Application::run()
 
     glm::mat4 projection, view;
 #ifdef RENDERER_3D
-    for (const auto& [transform, mesh_id, _, light_id]: scene_.entities()) {
+    for (const auto& [transform, mesh_id, _, light_id, shadows]: scene_.entities()) {
       if (mesh_id != UINT32_MAX) {
-        for (const auto& [range, material]: scene_.resource()->meshes.at(mesh_id).primitives) {
-          renderer_.submit_geometry({range, material, transform});
+        uint32_t flags = 0;
+        if (!shadows) flags |= GeometryFlags::NoShadow;
+        for (const auto& [primitive, material]: scene_.resource()->meshes.at(mesh_id).primitives) {
+          renderer_.submit_geometry({primitive, material, transform, flags});
         }
       }
 
@@ -150,7 +152,7 @@ void Application::poll_events()
 ActiveRenderer Application::create_renderer()
 {
   file_system_.add_route("assets", "assets/");
-  
+
   uint32_t sdl_instance_extension_count = 0;
   const auto* const sdl_instance_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_instance_extension_count);
 

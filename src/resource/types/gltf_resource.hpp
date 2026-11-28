@@ -19,7 +19,7 @@ struct GLTFResource {
   };
 
   struct Primitive {
-    GeometryRange range;
+    GPUPrimitive primitive;
     GPUMaterial material;
   };
 

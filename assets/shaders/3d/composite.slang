@@ -1,4 +1,4 @@
-#include "../common.slang"
+#include "common.slang"
 
 struct PushConstant {
     uint composite_id;
@@ -13,15 +13,6 @@ struct PushConstant {
     uint pbr_id;
     uint emissive_id;
     uint depth_id;
-}
-
-struct FrameData {
-    float4x4 inv_view_proj;
-    float3 camera_pos;
-    float3 sun_dir;
-    float3 sun_color;
-    float3 ambient;
-    float3 ambient_indirect;
 }
 
 struct LightsData {
@@ -40,14 +31,6 @@ struct Light {
     float angle_size;
     float3 radiance;
     float angle_offset;
-}
-
-struct Cascades {
-    float4x4 world_to_shadow_clip[4];
-    float4 world_units_per_texel;
-    float4 filter_radius_per_texel;
-    float inv_res;
-    float blend;
 }
 
 struct Fragment {

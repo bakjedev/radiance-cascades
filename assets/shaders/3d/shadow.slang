@@ -1,3 +1,5 @@
+#include "common.slang"
+
 struct VSInput {
     float3 pos : POSITION;
 }
@@ -6,16 +8,6 @@ struct PushConstant {
     uint cascade;
     uint cascades_id;
     uint geometries_id;
-}
-
-struct Cascades {
-    float4x4 world_to_shadow_clip[4];
-    float4 world_units_per_texel;
-}
-
-struct Geometry {
-    float4x4 transform;
-    uint material;
 }
 
 [[vk::binding(1, 0)]] StructuredBuffer<Geometry> storageBuffersGeometry[];

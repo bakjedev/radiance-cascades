@@ -25,12 +25,7 @@ struct GPUResource {
 struct GPUImage : GPUResource {};
 struct GPUMaterial : GPUResource {};
 struct GPUSampler : GPUResource {};
-
-struct GeometryRange {
-  uint32_t first_index;
-  uint32_t index_count;
-  int32_t vertex_offset;
-};
+struct GPUPrimitive : GPUResource {};
 
 enum class Filter : uint8_t {
   Nearest = 0,
@@ -71,9 +66,10 @@ struct Vertex {
 };
 
 struct GeometrySubmission {
-  GeometryRange range;
+  GPUPrimitive primitive;
   GPUMaterial material;
   glm::mat4 transform;
+  uint32_t flags;
 };
 
 struct LightSubmission {
@@ -86,3 +82,10 @@ struct SpotLightSubmission : LightSubmission {
   glm::vec3 direction;
   float cos_inner, cos_outer;
 };
+
+namespace GeometryFlags {
+  constexpr uint32_t None = 0;
+  constexpr uint32_t Masked = 1U << 0;
+  constexpr uint32_t Blend = 1U << 1;
+  constexpr uint32_t NoShadow = 1U << 2;
+} // namespace GeometryFlags

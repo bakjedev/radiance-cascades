@@ -11,6 +11,45 @@
 #include "src/resource/resource_manager.hpp"
 #include "src/resource/types/image_resource.hpp"
 
+namespace {
+  glm::vec4 ritter_bounds(const std::span<const Vertex> vertices)
+  {
+    if (vertices.empty()) return glm::vec4(0.0f);
+
+    auto farthest = [&](const glm::vec3& from) {
+      size_t best = 0;
+      float best_dist = -1.0f;
+      for (size_t i = 0; i < vertices.size(); i++) {
+        glm::vec3 dist = vertices[i].position - from;
+        const float dist_sq = glm::dot(dist, dist);
+        if (dist_sq > best_dist) {
+          best_dist = dist_sq;
+          best = i;
+        }
+      }
+      return vertices[best].position;
+    };
+
+    const glm::vec3 y = farthest(vertices[0].position);
+    const glm::vec3 z = farthest(y);
+
+    glm::vec3 center = (y + z) * 0.5f;
+    float radius = glm::length(z - y) * 0.5f;
+
+    for (const auto& vertex: vertices) {
+      const glm::vec3 diff = vertex.position - center;
+      const float dist_sq = glm::dot(diff, diff);
+      if (dist_sq > radius * radius) {
+        const float dist = std::sqrt(dist_sq);
+        const float new_radius = (radius + dist) * 0.5f;
+        center += diff * ((new_radius - radius) / dist);
+        radius = new_radius;
+      }
+    }
+    return {center, radius};
+  }
+} // namespace
+
 GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
 {
   GLTFResource result{};
@@ -176,15 +215,11 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
     primitives.reserve(mesh.primitives.size());
 
     for (const auto& primitive: mesh.primitives) {
-      GeometryRange range{};
-      range.first_index = static_cast<uint32_t>(indices.size());
-
-      const auto start_vertex = static_cast<uint32_t>(vertices.size());
-      range.vertex_offset = static_cast<int32_t>(start_vertex);
+      const auto first_index = indices.size();
+      const auto first_vertex = vertices.size();
 
       {
         fastgltf::Accessor& index_accessor = asset->accessors[primitive.indicesAccessor.value()];
-        range.index_count = static_cast<uint32_t>(index_accessor.count);
         indices.reserve(indices.size() + index_accessor.count);
         fastgltf::iterateAccessor<uint32_t>(asset.get(), index_accessor,
                                             [&](const uint32_t idx) { indices.push_back(idx); });
@@ -196,7 +231,7 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
 
         fastgltf::iterateAccessorWithIndex<glm::vec3>(asset.get(), pos_accessor,
                                                       [&](const glm::vec3 pos, const size_t idx) {
-                                                        vertices[start_vertex + idx] = Vertex{.position = pos,
+                                                        vertices[first_vertex + idx] = Vertex{.position = pos,
                                                                                               .normal = {1, 0, 0},
                                                                                               .tex_coord_0 = {0, 0},
                                                                                               .tex_coord_1 = {0, 0},
@@ -208,7 +243,7 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
       if (normals != primitive.attributes.end()) {
         fastgltf::iterateAccessorWithIndex<glm::vec3>(
             asset.get(), asset->accessors[normals->accessorIndex],
-            [&](const glm::vec3 normal, const size_t idx) { vertices[start_vertex + idx].normal = normal; });
+            [&](const glm::vec3 normal, const size_t idx) { vertices[first_vertex + idx].normal = normal; });
       }
 
       auto uvs_0 = primitive.findAttribute("TEXCOORD_0");
@@ -216,28 +251,30 @@ GLTFResource GLTFResourceLoader::operator()(const std::string& path) const
       if (uvs_0 != primitive.attributes.end()) {
         fastgltf::iterateAccessorWithIndex<glm::vec2>(
             asset.get(), asset->accessors[uvs_0->accessorIndex],
-            [&](const glm::vec2 uv, const size_t idx) { vertices[start_vertex + idx].tex_coord_0 = uv; });
+            [&](const glm::vec2 uv, const size_t idx) { vertices[first_vertex + idx].tex_coord_0 = uv; });
       }
       if (uvs_1 != primitive.attributes.end()) {
         fastgltf::iterateAccessorWithIndex<glm::vec2>(
             asset.get(), asset->accessors[uvs_1->accessorIndex],
-            [&](const glm::vec2 uv, const size_t idx) { vertices[start_vertex + idx].tex_coord_1 = uv; });
+            [&](const glm::vec2 uv, const size_t idx) { vertices[first_vertex + idx].tex_coord_1 = uv; });
       }
 
       auto tangents = primitive.findAttribute("TANGENT");
       if (tangents != primitive.attributes.end()) {
         fastgltf::iterateAccessorWithIndex<glm::vec4>(
             asset.get(), asset->accessors[tangents->accessorIndex],
-            [&](const glm::vec4 tangent, const size_t idx) { vertices[start_vertex + idx].tangent = tangent; });
+            [&](const glm::vec4 tangent, const size_t idx) { vertices[first_vertex + idx].tangent = tangent; });
       }
 
-      const GPUMaterial material =
+      const auto local_vertices = std::span(vertices).subspan(first_vertex);
+      const GPUPrimitive prim = renderer->create_primitive(local_vertices, std::span(indices).subspan(first_index),
+                                                           ritter_bounds(local_vertices));
+      const GPUMaterial mat =
           primitive.materialIndex ? result.materials.at(*primitive.materialIndex) : GPUMaterial{UINT32_MAX};
 
-      primitives.emplace_back(range, material);
+      primitives.emplace_back(prim, mat);
     }
   }
-  renderer->upload_vertices(vertices, indices);
 
   for (const auto& light: asset->lights) {
     result.lights.emplace_back(static_cast<GLTFResource::Light::Type>(light.type), glm::make_vec3(light.color.data()),

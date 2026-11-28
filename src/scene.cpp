@@ -41,7 +41,8 @@ Scene::Scene(const ResourceHandle<GLTFResource>& resource) : scene_resource_(res
           break;
       }
     }
-    entities_.emplace_back(node.transform, node.mesh_id, camera_id, light_id);
+
+    entities_.emplace_back(node.transform, node.mesh_id, camera_id, light_id, true);
   }
 
   active_camera_ = UINT32_MAX;
@@ -58,6 +59,7 @@ Scene::Scene(const ResourceHandle<GLTFResource>& resource) : scene_resource_(res
         .mesh_id = UINT32_MAX,
         .camera_id = static_cast<uint32_t>(cameras_.size() - 1),
         .light_id = UINT32_MAX,
+        .cast_shadow = false,
     });
     active_camera_ = static_cast<uint32_t>(entities_.size() - 1);
   }

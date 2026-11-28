@@ -8,6 +8,15 @@
 #include "src/vulkan/pipeline.hpp"
 
 namespace {
+  struct CullPushConstant {
+    uint32_t indirect_id;
+    uint32_t geometries_id;
+    uint32_t primitive_id;
+    uint32_t count_id;
+    uint32_t filter_id;
+    uint32_t geometries_count;
+  };
+
   struct RasterPushConstant {
     glm::mat4 view_proj;
     uint32_t geometries_id;
@@ -55,8 +64,12 @@ namespace {
 
   enum BufferDescriptors {
     GeometriesBuffer = 0,
-    MaterialBuffer,
+    MaterialBuffer = GeometriesBuffer + Renderer3D::frames_in_flight,
     LightsBuffer,
+    PrimitiveBuffer,
+    CountBuffer,
+    IndirectBuffer,
+    FilterBuffer,
   };
 
   enum SamplerDescriptors {
@@ -71,24 +84,49 @@ namespace {
 
   enum UBODescriptors {
     FrameDataUBO = 0,
-    CascadedShadowsUBO,
-    LightsDataUBO,
+    CascadedShadowsUBO = FrameDataUBO + Renderer3D::frames_in_flight,
+    LightsDataUBO = CascadedShadowsUBO + Renderer3D::frames_in_flight,
   };
+
+  enum Filters {
+    RasterFilter = 0,
+    ShadowCascadeFilter,
+  };
+
+  namespace CullFlags {
+    constexpr uint32_t None = 0;
+    constexpr uint32_t Frustum = 1U << 0;
+    constexpr uint32_t Near = 1U << 1;
+  } // namespace CullFlags
 } // namespace
 
 Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(create_info)
 {
+  constexpr auto indirect_size = sizeof(vk::DrawIndexedIndirectCommand) * max_geometries;
   indirect_buffer_.emplace(
       device_.get_allocator(), device_.get(),
-      BufferDesc{
-          .size = sizeof(vk::DrawIndexedIndirectCommand) * max_geometries * frames_in_flight,
-          .usage = vk::BufferUsageFlagBits::eIndirectBuffer,
-          .memory_usage = VMA_MEMORY_USAGE_AUTO,
-          .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-          .debug_name = "Indirect buffer"});
+      BufferDesc{.size = indirect_size * filter_count,
+                 .usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eStorageBuffer,
+                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                 .debug_name = "Indirect buffer"});
 
+  indirect_id = context_.import_buffer({.size = indirect_size * filter_count, .state = fwrk::PhysicalState::Undefined},
+                                       indirect_buffer_->buffer());
+
+  count_buffer.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{.size = sizeof(uint32_t) * filter_count,
+                 .usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
+                          vk::BufferUsageFlagBits::eTransferDst,
+                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                 .debug_name = "Count buffer"});
+  count_id = context_.import_buffer(
+      fwrk::BufferImportInfo{.size = sizeof(uint32_t) * filter_count, .state = fwrk::PhysicalState::Undefined},
+      count_buffer->buffer());
+
+  constexpr auto geometries_size = sizeof(Geometry) * max_geometries;
   geometries_buffer_.emplace(device_.get_allocator(), device_.get(),
-                             BufferDesc{.size = sizeof(Geometry) * max_geometries * frames_in_flight,
+                             BufferDesc{.size = geometries_size * frames_in_flight,
                                         .usage = vk::BufferUsageFlagBits::eStorageBuffer,
                                         .memory_usage = VMA_MEMORY_USAGE_AUTO,
                                         .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
@@ -103,40 +141,48 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
                                                    VMA_ALLOCATION_CREATE_MAPPED_BIT,
                                     .debug_name = "Lights buffer"});
 
+  filter_buffer_.emplace(device_.get_allocator(), device_.get(),
+                         BufferDesc{.size = sizeof(CullFilter) * filter_count,
+                                    .usage = vk::BufferUsageFlagBits::eStorageBuffer,
+                                    .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                                    .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                                   VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                                    .debug_name = "Filter buffer"});
+
   const auto ubo_alignment = device_.get_physical().getProperties().limits.minUniformBufferOffsetAlignment;
-  frame_data_size_ = (sizeof(FrameData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
-  cascades_size_ = (sizeof(CascadedShadows) + ubo_alignment - 1) & ~(ubo_alignment - 1);
-  lights_data_size_ = (sizeof(LightsData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+  frame_data_ubo_size_ = (sizeof(FrameData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+  cascaded_shadows_ubo_size_ = (sizeof(CascadedShadows) + ubo_alignment - 1) & ~(ubo_alignment - 1);
+  lights_data_ubo_size_ = (sizeof(LightsData) + ubo_alignment - 1) & ~(ubo_alignment - 1);
   constexpr auto frame_data_base = static_cast<vk::DeviceSize>(0);
-  cascades_base_ = frame_data_size_ * frames_in_flight;
-  lights_data_base_ = cascades_base_ + cascades_size_ * frames_in_flight;
+  cascades_ubo_base_ = frame_data_ubo_size_ * frames_in_flight;
+  lights_data_ubo_base_ = cascades_ubo_base_ + cascaded_shadows_ubo_size_ * frames_in_flight;
 
   ubo_buffer_.emplace(
       device_.get_allocator(), device_.get(),
       BufferDesc{}
-          .set_size(frame_data_size_ * frames_in_flight + cascades_size_ * frames_in_flight +
-                    lights_data_size_ * frames_in_flight)
+          .set_size(frame_data_ubo_size_ * frames_in_flight + cascaded_shadows_ubo_size_ * frames_in_flight +
+                    lights_data_ubo_size_ * frames_in_flight)
           .set_usage(vk::BufferUsageFlagBits::eUniformBuffer)
           .set_allocate_flags(VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
           .set_debug_name("UBOs"));
 
-  shadow_image_.emplace(
+  cascaded_shadow_image_.emplace(
       device_.get_allocator(), device_.get(),
       ImageDesc{}
           .set_format(vk::Format::eD32Sfloat)
           .set_extent(CascadedShadows::Resolution, CascadedShadows::Resolution)
           .set_layers(CascadedShadows::Count)
           .set_usage(vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled)
-          .set_debug_name("Shadow Image"));
-  shadow_view_ =
-      shadow_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eDepth, vk::ImageViewType::e2DArray);
-  shadow_id_ = context_.import_image({.type = VK_IMAGE_TYPE_2D,
-                                      .size = {CascadedShadows::Resolution, CascadedShadows::Resolution, 1},
-                                      .format = VK_FORMAT_D32_SFLOAT,
-                                      .mip_count = 1,
-                                      .layer_count = CascadedShadows::Count,
-                                      .state = fwrk::PhysicalState::Undefined},
-                                     shadow_image_->image(), "Shadow Image");
+          .set_debug_name("Cascaded Shadow Image"));
+  cascaded_shadow_view_ = cascaded_shadow_image_->create_image_view(device_.get(), vk::ImageAspectFlagBits::eDepth,
+                                                                    vk::ImageViewType::e2DArray);
+  cascaded_shadow_id_ = context_.import_image({.type = VK_IMAGE_TYPE_2D,
+                                               .size = {CascadedShadows::Resolution, CascadedShadows::Resolution, 1},
+                                               .format = VK_FORMAT_D32_SFLOAT,
+                                               .mip_count = 1,
+                                               .layer_count = CascadedShadows::Count,
+                                               .state = fwrk::PhysicalState::Undefined},
+                                              cascaded_shadow_image_->image(), "Shadow Image");
 
   vk::SamplerCreateInfo sampler_info{};
   sampler_info.setAddressModeU(vk::SamplerAddressMode::eClampToBorder);
@@ -146,14 +192,32 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   sampler_info.setBorderColor(vk::BorderColor::eFloatOpaqueWhite);
   sampler_info.setCompareEnable(vk::True);
   sampler_info.setCompareOp(vk::CompareOp::eLessOrEqual);
-  shadow_sampler_ = device_.get().createSamplerUnique(sampler_info);
+  cascaded_shadow_sampler_ = device_.get().createSamplerUnique(sampler_info);
 
   std::vector<vk::DebugUtilsObjectNameInfoEXT> debug_object_names;
-  debug_object_names.reserve(1);
+  debug_object_names.reserve(5);
 
   auto handle_to_uint64_t = []<typename T>(T handle) -> uint64_t {
     return reinterpret_cast<uint64_t>(static_cast<T::CType>(handle));
   };
+
+  {
+    vk::PushConstantRange cull_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(CullPushConstant)};
+
+    const auto cull_shader = create_info.load_shader("assets:/shaders/3d/cull.spv");
+    cull_shader_module_ = create_shader_module(device_.get(), cull_shader);
+
+    cull_pipeline_layout_ =
+        create_pipeline_layout(device_.get(), {&bindless_descriptor_set_layout_.get(), 1}, {&cull_push, 1});
+
+    const ComputePipelineDesc cull_pipeline_desc{.module = cull_shader_module_.get(),
+                                                 .layout = cull_pipeline_layout_.get()};
+
+    cull_pipeline_ = create_compute_pipeline(device_.get(), cull_pipeline_desc);
+
+    debug_object_names.emplace_back(vk::ObjectType::ePipeline, handle_to_uint64_t(cull_pipeline_.get()),
+                                    "Cull Pipeline");
+  }
 
   {
     vk::PushConstantRange raster_push{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
@@ -299,21 +363,27 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
 
   DescriptorWriter writer{};
 
-  writer.add_buffer(1, GeometriesBuffer, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer())
+  writer.add_buffer(1, IndirectBuffer, vk::DescriptorType::eStorageBuffer, indirect_buffer_->buffer())
+      .add_buffer(1, CountBuffer, vk::DescriptorType::eStorageBuffer, count_buffer->buffer())
+      .add_buffer(1, FilterBuffer, vk::DescriptorType::eStorageBuffer, filter_buffer_->buffer())
       .add_buffer(1, LightsBuffer, vk::DescriptorType::eStorageBuffer, lights_buffer_->buffer())
       .add_image(3, DefaultSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined, sampler_.get())
       .add_image(3, ShadowSampler, vk::DescriptorType::eSampler, nullptr, vk::ImageLayout::eUndefined,
-                 shadow_sampler_.get());
+                 cascaded_shadow_sampler_.get());
+
 
   for (uint32_t i = 0; i < frames_in_flight; i++) {
-    writer.add_buffer(4, i, vk::DescriptorType::eUniformBuffer, ubo_buf, frame_data_base + frame_data_size_ * i,
-                      frame_data_size_);
+    writer.add_buffer(4, FrameDataUBO + i, vk::DescriptorType::eUniformBuffer, ubo_buf,
+                      frame_data_base + frame_data_ubo_size_ * i, frame_data_ubo_size_);
 
-    writer.add_buffer(4, frames_in_flight + i, vk::DescriptorType::eUniformBuffer, ubo_buf,
-                      cascades_base_ + cascades_size_ * i, cascades_size_);
+    writer.add_buffer(4, CascadedShadowsUBO + i, vk::DescriptorType::eUniformBuffer, ubo_buf,
+                      cascades_ubo_base_ + cascaded_shadows_ubo_size_ * i, cascaded_shadows_ubo_size_);
 
-    writer.add_buffer(4, 2 * frames_in_flight + i, vk::DescriptorType::eUniformBuffer, ubo_buf,
-                      lights_data_base_ + lights_data_size_ * i, lights_data_size_);
+    writer.add_buffer(4, LightsDataUBO + i, vk::DescriptorType::eUniformBuffer, ubo_buf,
+                      lights_data_ubo_base_ + lights_data_ubo_size_ * i, lights_data_ubo_size_);
+
+    writer.add_buffer(1, GeometriesBuffer + i, vk::DescriptorType::eStorageBuffer, geometries_buffer_->buffer(),
+                      geometries_size * i, geometries_size);
   }
 
   writer.update(device_.get(), bindless_descriptor_set_);
@@ -322,6 +392,29 @@ Renderer3D::Renderer3D(const RendererCreateInfo& create_info) : RenderBackend(cr
   frame_data_.sun_color = glm::vec3(1.0f, 0.95f, 0.9f) * 3.0f;
   frame_data_.ambient = glm::vec3(0.15f, 0.18f, 0.25f);
   frame_data_.ambient_indirect = glm::vec3(0.05f, 0.04f, 0.03f);
+
+  for (uint32_t i = 0; i < filter_count; i++) {
+    auto* filter_mapping =
+        reinterpret_cast<CullFilter*>(filter_buffer_->get_mapped_data<std::byte>() + sizeof(CullFilter) * i);
+    filter_mapping->base = max_geometries * i;
+
+    switch (i) {
+      case RasterFilter: {
+        filter_mapping->cull_flags = CullFlags::Frustum | CullFlags::Near;
+        break;
+      }
+      case ShadowCascadeFilter:
+      case ShadowCascadeFilter + 1:
+      case ShadowCascadeFilter + 2:
+      case ShadowCascadeFilter + 3: {
+        filter_mapping->exclude_mask = GeometryFlags::Masked | GeometryFlags::Blend | GeometryFlags::NoShadow;
+        filter_mapping->cull_flags = CullFlags::Frustum;
+        break;
+      }
+      default:
+        break;
+    }
+  }
 }
 
 Renderer3D::~Renderer3D() { device_.get().waitIdle(); }
@@ -344,6 +437,10 @@ void Renderer3D::render(RenderInfo info)
     upload_materials();
     upload_materials_ = false;
   }
+  if (upload_primitives_) {
+    upload_primitives();
+    upload_primitives_ = false;
+  }
 
   upload_geometry();
 
@@ -352,6 +449,8 @@ void Renderer3D::render(RenderInfo info)
   update_frame_data();
 
   update_cascades();
+
+  update_filters();
 
   if (should_compile_) {
     should_compile_ = false;
@@ -458,54 +557,21 @@ GPUMaterial Renderer3D::create_material(const MaterialInfo& material)
   return {id};
 }
 
-void Renderer3D::upload_vertices(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
+GPUPrimitive Renderer3D::create_primitive(std::span<const Vertex> vertices, std::span<const uint32_t> indices,
+                                          const glm::vec4& bounds)
 {
-  device_.get().waitIdle(); // bit blunt, could queue these uploads instead and handle the sync in next frame.
+  const auto first_index = static_cast<uint32_t>(indices_.size());
+  const auto vertex_offset = static_cast<uint32_t>(vertices_.size());
+  vertices_.insert(vertices_.end(), vertices.begin(), vertices.end());
+  indices_.insert(indices_.end(), indices.begin(), indices.end());
 
-  BufferDesc staging_desc{
-      .usage = vk::BufferUsageFlagBits::eTransferSrc,
-      .memory_usage = VMA_MEMORY_USAGE_AUTO,
-      .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
-
-  const auto vertex_size = vertices.size() * sizeof(Vertex);
-  staging_desc.set_size(vertex_size);
-  const Buffer staging_vertex{device_.get_allocator(), device_.get(), staging_desc};
-  std::memcpy(staging_vertex.get_mapped_data(), vertices.data(), vertex_size);
-
-  const auto index_size = indices.size() * sizeof(uint32_t);
-  staging_desc.set_size(index_size);
-  const Buffer staging_index{device_.get_allocator(), device_.get(), staging_desc};
-  std::memcpy(staging_index.get_mapped_data(), indices.data(), index_size);
-
-  vertex_buffer_.emplace(
-      device_.get_allocator(), device_.get(),
-      BufferDesc{.size = vertex_size,
-                 .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
-                 .debug_name = "Vertex Buffer"});
-
-  index_buffer_.emplace(
-      device_.get_allocator(), device_.get(),
-      BufferDesc{.size = index_size,
-                 .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
-                 .debug_name = "Index Buffer"});
-
-  immediate_.submit([&](vk::CommandBuffer cmd) {
-    vk::BufferCopy2 region{};
-    region.setSize(vertex_size);
-
-    vk::CopyBufferInfo2 info{};
-    info.setSrcBuffer(staging_vertex.buffer());
-    info.setDstBuffer(vertex_buffer_->buffer());
-    info.setRegions(region);
-    cmd.copyBuffer2(&info);
-
-    region.setSize(index_size);
-    info.setSrcBuffer(staging_index.buffer());
-    info.setDstBuffer(index_buffer_->buffer());
-    cmd.copyBuffer2(&info);
-  });
+  const auto id = static_cast<uint32_t>(primitives_.size());
+  primitives_.push_back({.first_index = first_index,
+                         .index_count = static_cast<uint32_t>(indices.size()),
+                         .vertex_offset = vertex_offset,
+                         .local_bounds = bounds});
+  upload_primitives_ = true;
+  return {id};
 }
 
 void Renderer3D::submit_geometry(const GeometrySubmission& submission) { geometry_submissions_.push_back(submission); }
@@ -529,7 +595,18 @@ void Renderer3D::compile()
 
   update_descriptors();
 
+  graph.add_compute_pass("Clear Count")
+      .set_buffer_transfer_dst({.resource = {.id = count_id}})
+      .set_execute([this](vk::CommandBuffer cmd) { clear_count_pass(cmd); });
+
+  graph.add_compute_pass("Cull")
+      .set_storage_buffer_write({.resource = {.id = count_id}})
+      .set_storage_buffer_write({.resource = {.id = indirect_id}})
+      .set_execute([this](vk::CommandBuffer cmd) { cull_pass(cmd); });
+
   graph.add_graphics_pass("Raster")
+      .set_indirect_buffer_input({.resource = {.id = count_id}})
+      .set_indirect_buffer_input({.resource = {.id = indirect_id}})
       .set_color_attachment(
           {.resource = {.id = albedo_id_}, .load_op = fwrk::LoadOp::Clear, .store_op = fwrk::StoreOp::Store})
       .set_color_attachment(
@@ -544,7 +621,9 @@ void Renderer3D::compile()
 
   for (uint32_t i = 0; i < CascadedShadows::Count; i++) {
     graph.add_graphics_pass(std::format("Shadow Cascade {}", i))
-        .set_depth_attachment({.resource = {.id = shadow_id_},
+        .set_indirect_buffer_input({.resource = {.id = count_id}})
+        .set_indirect_buffer_input({.resource = {.id = indirect_id}})
+        .set_depth_attachment({.resource = {.id = cascaded_shadow_id_},
                                .load_op = fwrk::LoadOp::Clear,
                                .store_op = fwrk::StoreOp::Store,
                                .clear_value = {1.0f},
@@ -558,7 +637,7 @@ void Renderer3D::compile()
       .set_image_read({.resource = {.id = pbr_id_}})
       .set_image_read({.resource = {.id = emissive_id_}})
       .set_image_read({.resource = {.id = depth_id_}})
-      .set_image_read({.resource = {.id = shadow_id_}})
+      .set_image_read({.resource = {.id = cascaded_shadow_id_}})
       .set_storage_image_write({.resource = {.id = composite_id_}})
       .set_execute([this](vk::CommandBuffer cmd) { composite_pass(cmd); });
 
@@ -587,6 +666,32 @@ void Renderer3D::imgui_pass(vk::CommandBuffer cmd) const
   ImGui_ImplVulkan_RenderDrawData(info_.imgui_draw_data, cmd);
 }
 
+void Renderer3D::clear_count_pass(vk::CommandBuffer cmd) const
+{
+  cmd.fillBuffer(count_buffer->buffer(), 0, sizeof(uint32_t) * filter_count, 0);
+}
+
+void Renderer3D::cull_pass(vk::CommandBuffer cmd) const
+{
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, cull_pipeline_.get());
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, cull_pipeline_layout_.get(), 0, 1, &bindless_descriptor_set_,
+                         0, nullptr);
+
+  const CullPushConstant push_constant{.indirect_id = IndirectBuffer,
+                                       .geometries_id = GeometriesBuffer + current_frame_,
+                                       .primitive_id = PrimitiveBuffer,
+                                       .count_id = CountBuffer,
+                                       .filter_id = FilterBuffer,
+                                       .geometries_count = geometries_count_};
+
+  cmd.pushConstants(cull_pipeline_layout_.get(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(CullPushConstant),
+                    &push_constant);
+
+  const uint32_t gx = (geometries_count_ + 255) / 256;
+  constexpr uint32_t gy = filter_count;
+  cmd.dispatch(gx, gy, 1);
+}
+
 void Renderer3D::raster_pass(vk::CommandBuffer cmd) const
 {
   cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, raster_pipeline_.get());
@@ -602,7 +707,7 @@ void Renderer3D::raster_pass(vk::CommandBuffer cmd) const
   cmd.setScissor(0, 1, &scissor);
 
   const RasterPushConstant push_constant{.view_proj = info_.projection * info_.view,
-                                         .geometries_id = GeometriesBuffer,
+                                         .geometries_id = GeometriesBuffer + current_frame_,
                                          .materials_id = MaterialBuffer,
                                          .textures_id = Textures,
                                          .samplers_id = TextureSamplers};
@@ -618,8 +723,8 @@ void Renderer3D::raster_pass(vk::CommandBuffer cmd) const
   cmd.bindIndexBuffer(index_buffer, offset, vk::IndexType::eUint32);
 
   constexpr auto stride = sizeof(vk::DrawIndexedIndirectCommand);
-  cmd.drawIndexedIndirect(indirect_buffer_->buffer(), stride * max_geometries * current_frame_, geometry_count_,
-                          stride);
+  cmd.drawIndexedIndirectCount(indirect_buffer_->buffer(), max_geometries * stride * RasterFilter,
+                               count_buffer->buffer(), sizeof(uint32_t) * RasterFilter, geometries_count_, stride);
 }
 
 void Renderer3D::shadow_pass(vk::CommandBuffer cmd, const uint32_t cascade) const
@@ -641,8 +746,8 @@ void Renderer3D::shadow_pass(vk::CommandBuffer cmd, const uint32_t cascade) cons
                    filter_texels + 1.0f);
 
   const ShadowPushConstant push_constant{.cascade = cascade,
-                                         .cascades_id = CascadedShadowsUBO * frames_in_flight + current_frame_,
-                                         .geometries_id = GeometriesBuffer};
+                                         .cascades_id = CascadedShadowsUBO + current_frame_,
+                                         .geometries_id = GeometriesBuffer + current_frame_};
 
   cmd.pushConstants(shadow_pipeline_layout_.get(), vk::ShaderStageFlagBits::eVertex, 0, sizeof(ShadowPushConstant),
                     &push_constant);
@@ -654,8 +759,9 @@ void Renderer3D::shadow_pass(vk::CommandBuffer cmd, const uint32_t cascade) cons
   cmd.bindIndexBuffer(index_buffer, offset, vk::IndexType::eUint32);
 
   constexpr auto stride = sizeof(vk::DrawIndexedIndirectCommand);
-  cmd.drawIndexedIndirect(indirect_buffer_->buffer(), stride * max_geometries * current_frame_, geometry_starts_[1],
-                          stride);
+  cmd.drawIndexedIndirectCount(indirect_buffer_->buffer(), max_geometries * stride * (ShadowCascadeFilter + cascade),
+                               count_buffer->buffer(), sizeof(uint32_t) * (ShadowCascadeFilter + cascade),
+                               geometries_count_, stride);
 }
 
 void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
@@ -665,9 +771,9 @@ void Renderer3D::composite_pass(vk::CommandBuffer cmd) const
                          &bindless_descriptor_set_, 0, nullptr);
 
   const CompositePushConstant push_constant{.composite_id = CompositeImage,
-                                            .frame_data_id = FrameDataUBO * frames_in_flight + current_frame_,
-                                            .cascades_id = CascadedShadowsUBO * frames_in_flight + current_frame_,
-                                            .lights_data_id = LightsDataUBO * frames_in_flight + current_frame_,
+                                            .frame_data_id = FrameDataUBO + current_frame_,
+                                            .cascades_id = CascadedShadowsUBO + current_frame_,
+                                            .lights_data_id = LightsDataUBO + current_frame_,
                                             .shadow_id = ShadowTexture,
                                             .shadow_sampler_id = ShadowSampler,
                                             .lights_id = LightsBuffer,
@@ -709,43 +815,140 @@ void Renderer3D::blit_pass(vk::CommandBuffer cmd) const
   cmd.draw(3, 1, 0, 0);
 }
 
+void Renderer3D::upload_primitives()
+{
+  device_.get().waitIdle(); // bit blunt, could queue these uploads instead and handle the sync in next frame.
+
+  BufferDesc staging_desc{
+      .usage = vk::BufferUsageFlagBits::eTransferSrc,
+      .memory_usage = VMA_MEMORY_USAGE_AUTO,
+      .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+
+  const auto vertex_size = vertices_.size() * sizeof(Vertex);
+  staging_desc.set_size(vertex_size);
+  const Buffer staging_vertex{device_.get_allocator(), device_.get(), staging_desc};
+  std::memcpy(staging_vertex.get_mapped_data(), vertices_.data(), vertex_size);
+  vertices_.clear();
+
+  const auto index_size = indices_.size() * sizeof(uint32_t);
+  staging_desc.set_size(index_size);
+  const Buffer staging_index{device_.get_allocator(), device_.get(), staging_desc};
+  std::memcpy(staging_index.get_mapped_data(), indices_.data(), index_size);
+  indices_.clear();
+
+  const auto primitive_size = primitives_.size() * sizeof(Primitive);
+  staging_desc.set_size(primitive_size);
+  const Buffer staging_primitive{device_.get_allocator(), device_.get(), staging_desc};
+  std::memcpy(staging_primitive.get_mapped_data(), primitives_.data(), primitive_size);
+  // primitives_.clear();
+
+  vertex_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{.size = vertex_size,
+                 .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                 .debug_name = "Vertex Buffer"});
+
+  index_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{.size = index_size,
+                 .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                 .debug_name = "Index Buffer"});
+
+  primitive_buffer_.emplace(
+      device_.get_allocator(), device_.get(),
+      BufferDesc{.size = primitive_size,
+                 .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
+                 .memory_usage = VMA_MEMORY_USAGE_AUTO,
+                 .debug_name = "Primitive Buffer"});
+
+  immediate_.submit([&](vk::CommandBuffer cmd) {
+    vk::BufferCopy2 region{};
+    region.setSize(vertex_size);
+
+    vk::CopyBufferInfo2 info{};
+    info.setSrcBuffer(staging_vertex.buffer());
+    info.setDstBuffer(vertex_buffer_->buffer());
+    info.setRegions(region);
+    cmd.copyBuffer2(&info);
+
+    region.setSize(index_size);
+    info.setSrcBuffer(staging_index.buffer());
+    info.setDstBuffer(index_buffer_->buffer());
+    cmd.copyBuffer2(&info);
+
+    region.setSize(primitive_size);
+    info.setSrcBuffer(staging_primitive.buffer());
+    info.setDstBuffer(primitive_buffer_->buffer());
+    cmd.copyBuffer2(&info);
+  });
+
+  DescriptorWriter{}
+      .add_buffer(1, PrimitiveBuffer, vk::DescriptorType::eStorageBuffer, primitive_buffer_->buffer())
+      .update(device_.get(), bindless_descriptor_set_);
+}
+
+void Renderer3D::update_filters() const
+{
+  for (uint32_t i = 0; i < filter_count; i++) {
+    auto* filter_mapping =
+        reinterpret_cast<CullFilter*>(filter_buffer_->get_mapped_data<std::byte>() + sizeof(CullFilter) * i);
+
+    switch (i) {
+      case RasterFilter: {
+        filter_mapping->planes = extract_frustum_planes(info_.projection * info_.view);
+        break;
+      }
+      case ShadowCascadeFilter:
+      case ShadowCascadeFilter + 1:
+      case ShadowCascadeFilter + 2:
+      case ShadowCascadeFilter + 3: {
+        const uint32_t cascade = i - ShadowCascadeFilter;
+        filter_mapping->planes = extract_frustum_planes(cascades_.world_to_shadow_clip[cascade]);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
 void Renderer3D::upload_geometry()
 {
-  constexpr auto indirect_region = sizeof(vk::DrawIndexedIndirectCommand) * max_geometries;
   constexpr auto geometries_region = sizeof(Geometry) * max_geometries;
 
-  auto* indirect_mapping = reinterpret_cast<vk::DrawIndexedIndirectCommand*>(
-      indirect_buffer_->get_mapped_data<std::byte>() + indirect_region * current_frame_);
   auto* geometries_mapping = reinterpret_cast<Geometry*>(geometries_buffer_->get_mapped_data<std::byte>() +
                                                          geometries_region * current_frame_);
 
-  geometry_count_ = static_cast<uint32_t>(geometry_submissions_.size());
+  geometries_count_ = static_cast<uint32_t>(geometry_submissions_.size());
+  for (uint32_t i = 0; i < geometry_submissions_.size(); i++) {
+    auto& [primitive, material, transform, flags] = geometry_submissions_[i];
 
-  auto get_alpha_mode = [&](const GeometrySubmission& submission) {
-    return materials_[submission.material.id].alpha_mode;
-  };
+    const auto& bounds = primitives_.at(primitive.id).local_bounds;
+    const float sx = glm::length(glm::vec3(transform[0]));
+    const float sy = glm::length(glm::vec3(transform[1]));
+    const float sz = glm::length(glm::vec3(transform[2]));
 
-  std::array<uint32_t, 3> counts{};
-  for (const auto& submission: geometry_submissions_) counts[get_alpha_mode(submission)]++;
+    const auto bounds_center = glm::vec3(transform * glm::vec4(glm::vec3(bounds), 1.0f));
+    const float bounds_radius = bounds.w * glm::max(sx, glm::max(sy, sz));
 
-  std::array<uint32_t, 3> cursor{};
-  uint32_t start = 0;
-  for (uint32_t i = 0; i < 3; i++) {
-    geometry_starts_[i] = start;
-    cursor[i] = start;
-    start += counts[i];
-  }
+    switch (materials_.at(material.id).alpha_mode) {
+      case 1:
+        flags |= GeometryFlags::Masked;
+        break;
+      case 2:
+        flags |= GeometryFlags::Blend;
+        break;
+      default:
+        break;
+    }
 
-  for (const auto& submission: geometry_submissions_) {
-    const auto& [range, material, transform] = submission;
-    const uint32_t i = cursor[get_alpha_mode(submission)]++;
-    indirect_mapping[i] = vk::DrawIndexedIndirectCommand{}
-                              .setIndexCount(range.index_count)
-                              .setInstanceCount(1)
-                              .setFirstIndex(range.first_index)
-                              .setVertexOffset(range.vertex_offset)
-                              .setFirstInstance(current_frame_ * max_geometries + i);
-    geometries_mapping[i] = Geometry{.transform = transform, .material = material};
+    geometries_mapping[i] = Geometry{.transform = transform,
+                                     .bounds = {bounds_center, bounds_radius},
+                                     .primitive = primitive,
+                                     .material = material,
+                                     .flags = flags};
   }
   geometry_submissions_.clear();
 }
@@ -771,8 +974,9 @@ void Renderer3D::upload_lights()
   lights_data_.point_lights_base = max_lights * current_frame_;
   lights_data_.spot_lights_base = max_lights * current_frame_ + max_point_lights;
 
-  std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + lights_data_base_ + lights_data_size_ * current_frame_,
-              &lights_data_, sizeof(LightsData));
+  std::memcpy(
+      ubo_buffer_->get_mapped_data<std::byte>() + lights_data_ubo_base_ + lights_data_ubo_size_ * current_frame_,
+      &lights_data_, sizeof(LightsData));
 }
 
 void Renderer3D::upload_materials()
@@ -815,7 +1019,7 @@ void Renderer3D::update_frame_data()
 {
   frame_data_.inv_view_proj = glm::inverse(info_.projection * info_.view);
   frame_data_.camera_pos = -glm::vec3(info_.view[3]) * glm::mat3(info_.view);
-  std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + frame_data_size_ * current_frame_, &frame_data_,
+  std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + frame_data_ubo_size_ * current_frame_, &frame_data_,
               sizeof(FrameData));
 }
 
@@ -932,7 +1136,7 @@ void Renderer3D::update_descriptors()
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, DepthTexture, vk::DescriptorType::eSampledImage, depth_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
-      .add_image(2, ShadowTexture, vk::DescriptorType::eSampledImage, shadow_view_.get(),
+      .add_image(2, ShadowTexture, vk::DescriptorType::eSampledImage, cascaded_shadow_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal)
       .add_image(2, CompositeTexture, vk::DescriptorType::eSampledImage, composite_view_.get(),
                  vk::ImageLayout::eShaderReadOnlyOptimal);
@@ -1018,8 +1222,9 @@ void Renderer3D::update_cascades()
   cascades_.inv_res = 1.0 / CascadedShadows::Resolution;
   cascades_.blend = CascadedShadows::Blend;
 
-  std::memcpy(ubo_buffer_->get_mapped_data<std::byte>() + cascades_base_ + cascades_size_ * current_frame_, &cascades_,
-              sizeof(CascadedShadows));
+  std::memcpy(
+      ubo_buffer_->get_mapped_data<std::byte>() + cascades_ubo_base_ + cascaded_shadows_ubo_size_ * current_frame_,
+      &cascades_, sizeof(CascadedShadows));
 }
 
 uint32_t Renderer3D::pack_texture_index(const MaterialInfo::Textures::Texture& texture)
@@ -1030,4 +1235,22 @@ uint32_t Renderer3D::pack_texture_index(const MaterialInfo::Textures::Texture& t
   assert(texture.tex_coord <= 1);
   assert(texture.sampler <= MaterialSamplerMask);
   return pack_material_texture(texture.index, texture.tex_coord, texture.sampler);
+}
+
+std::array<glm::vec4, 6> Renderer3D::extract_frustum_planes(const glm::mat4& matrix)
+{
+  constexpr auto normalize_plane = [](const glm::vec4& plane) {
+    const float inv_length = 1.0f / glm::length(glm::vec3(plane));
+    return plane * inv_length;
+  };
+
+  const glm::mat4 transpose = glm::transpose(matrix);
+  return {
+      normalize_plane(transpose[3] + transpose[0]), // left
+      normalize_plane(transpose[3] - transpose[0]), // right
+      normalize_plane(transpose[3] + transpose[1]), // bottom
+      normalize_plane(transpose[3] - transpose[1]), // top
+      normalize_plane(transpose[3] - transpose[2]), // far
+      normalize_plane(transpose[2]), // near
+  };
 }
